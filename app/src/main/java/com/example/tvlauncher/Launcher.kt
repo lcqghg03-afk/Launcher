@@ -107,6 +107,9 @@ open class VActivity : Activity() {
     override fun attachBaseContext(b: Context) { super.attachBaseContext(viCtx(b)) }
 }
 
+// Gói ứng dụng xem TV/nguồn tín hiệu của Xiaomi (thử lần lượt, gói nào có trên TV thì dùng)
+val MITV_PKGS = listOf("com.xiaomi.mitv.tvplayer", "com.xiaomi.mitv.livetv", "com.mitv.tvhome", "com.xiaomi.mitv.settings.input")
+
 fun isXiaomi() = Build.MANUFACTURER.equals("xiaomi", true) || Build.BRAND.equals("xiaomi", true) || Build.BRAND.equals("redmi", true)
 
 /** Thử lần lượt từng intent, intent nào mở được thì dừng. TV Xiaomi nội địa hay thiếu màn hình hệ thống chuẩn */
@@ -656,7 +659,9 @@ class MainActivity : VActivity() {
                 val iv = ImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
                 bg.addView(iv, -1, -1)
                 thread {
-                    val bmp = decodeScaled(this, u, 1920, 1080)
+                    // Độ phân giải ảnh nền: Full HD (mặc định) / 2K / 4K / Gốc
+                    val (iw, ih) = when (Apps.int(this, "imgres", 0)) { 1 -> 2560 to 1440; 2 -> 3840 to 2160; 3 -> Int.MAX_VALUE to Int.MAX_VALUE; else -> 1920 to 1080 }
+                    val bmp = decodeScaled(this, u, iw, ih)
                     runOnUiThread { if (bmp != null) iv.setImageBitmap(bmp) else Toast.makeText(this, "Không mở được ảnh nền", Toast.LENGTH_SHORT).show() }
                 }
             }
@@ -666,7 +671,7 @@ class MainActivity : VActivity() {
 
     private fun applyAll() {
         applyBackground()
-        tint.setBackgroundColor(intArrayOf(0x00000000, 0x88102A5A.toInt(), 0x884A1A6A.toInt(), 0x886A1A1A.toInt(), 0x881A4A2A.toInt())[Apps.int(this, "color", 0)])
+        tint.setBackgroundColor(0x00000000)
         (bottomCol.layoutParams as FrameLayout.LayoutParams).bottomMargin = dp(intArrayOf(20, 40, 80)[Apps.int(this, "cat_h", 1)])
         bottomCol.requestLayout()
         lunar.visibility = if (Apps.bool(this, "lunar", true)) View.VISIBLE else View.GONE
@@ -694,32 +699,61 @@ class MainActivity : VActivity() {
         }
     }
 
-    private fun inputChip(name: String, connected: Boolean, inputId: String): View = LinearLayout(this).apply {
+    private fun inputChip(name: String, connected: Boolean, inputId: String, passthrough: Boolean = true): View = LinearLayout(this).apply {
         gravity = Gravity.CENTER_VERTICAL; isFocusable = true; isClickable = true
         setPadding(dp(14), dp(10), dp(16), dp(10)); background = chipBg(this@MainActivity)
         addView(ImageView(this@MainActivity).apply { setImageResource(R.drawable.ic_input) }, LinearLayout.LayoutParams(dp(22), dp(22)))
         addView(TextView(this@MainActivity).apply { text = name; textSize = 15f * Apps.fs(this@MainActivity); setTextColor(Color.WHITE); setPadding(dp(8), 0, dp(10), 0) })
         addView(View(this@MainActivity).apply { background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(if (connected) 0xFF3DDC84.toInt() else 0x66FFFFFF) } }, LinearLayout.LayoutParams(dp(8), dp(8)))
         setOnClickListener {
-            if (!safeStart(this@MainActivity, Intent(Intent.ACTION_VIEW, android.media.tv.TvContract.buildChannelUriForPassthroughInput(inputId))))
+            val uri = if (passthrough) android.media.tv.TvContract.buildChannelUriForPassthroughInput(inputId)
+                      else android.media.tv.TvContract.buildChannelsUriForInput(inputId)
+            if (!safeStart(this@MainActivity, Intent(Intent.ACTION_VIEW, uri)))
                 Toast.makeText(this@MainActivity, "Không chuyển được sang $name", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    // Chip "MiTV": mở thẳng ứng dụng xem TV/nguồn tín hiệu của Xiaomi khi hệ thống không liệt kê đầu vào MiTV riêng
+    private fun mitvAppChip(): View? {
+        val pm = packageManager
+        val intent = MITV_PKGS.firstNotNullOfOrNull { pm.getLaunchIntentForPackage(it) } ?: return null
+        return LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL; isFocusable = true; isClickable = true
+            setPadding(dp(14), dp(10), dp(16), dp(10)); background = chipBg(this@MainActivity)
+            addView(ImageView(this@MainActivity).apply { setImageResource(R.drawable.ic_input) }, LinearLayout.LayoutParams(dp(22), dp(22)))
+            addView(TextView(this@MainActivity).apply { text = "MiTV"; textSize = 15f * Apps.fs(this@MainActivity); setTextColor(Color.WHITE); setPadding(dp(8), 0, dp(10), 0) })
+            setOnClickListener { if (!safeStart(this@MainActivity, intent)) Toast.makeText(this@MainActivity, "Không mở được MiTV", Toast.LENGTH_SHORT).show() }
         }
     }
 
     // Liệt kê các cổng vào TV báo cho hệ thống: HDMI 1/2/3, VGA, AV... Chấm xanh = đang có thiết bị cắm
     private fun refreshInputs() {
         inputRow.removeAllViews()
+        val showMitv = Apps.bool(this, "mitv", false)
+        var mitvFound = false
         val list = try {
             val tm = getSystemService(Context.TV_INPUT_SERVICE) as android.media.tv.TvInputManager
-            tm.tvInputList.filter { it.isPassthroughInput }
-                .map { Triple(it.id, inputName(it), try { tm.getInputState(it.id) <= 1 } catch (e: Exception) { false }) }
-                .sortedWith(compareBy<Triple<String, String, Boolean>>({ !it.second.startsWith("HDMI", true) }, { it.second.lowercase() }))
+            tm.tvInputList
+                .filter { it.isPassthroughInput || (showMitv && isMitvInput(it)) }
+                .also { l -> mitvFound = showMitv && l.any { isMitvInput(it) } }
+                .map { Entry(it.id, inputName(it), try { tm.getInputState(it.id) <= 1 } catch (e: Exception) { false }, it.isPassthroughInput) }
+                .sortedWith(compareBy<Entry>({ !it.name.startsWith("HDMI", true) }, { it.name.lowercase() }))
         } catch (e: Exception) { emptyList() }
-        if (list.isEmpty()) {
+        val extra = if (showMitv && !mitvFound) mitvAppChip() else null
+        if (list.isEmpty() && extra == null) {
             inputRow.addView(TextView(this).apply { text = "Không thấy cổng vào. Hãy dùng phím Nguồn/Input trên điều khiển."; textSize = 13f; setTextColor(0xCCFFFFFF.toInt()); setPadding(dp(12), dp(8), 0, dp(8)) })
             return
         }
-        list.forEach { inputRow.addView(inputChip(it.second, it.third, it.first), LinearLayout.LayoutParams(-2, -2).apply { rightMargin = dp(10) }) }
+        list.forEach { inputRow.addView(inputChip(it.name, it.connected, it.id, it.passthrough), LinearLayout.LayoutParams(-2, -2).apply { rightMargin = dp(10) }) }
+        extra?.let { inputRow.addView(it, LinearLayout.LayoutParams(-2, -2).apply { rightMargin = dp(10) }) }
+    }
+
+    private class Entry(val id: String, val name: String, val connected: Boolean, val passthrough: Boolean)
+
+    // Đầu vào do dịch vụ của Xiaomi/MiTV cung cấp (không phải cổng HDMI/AV thông thường)
+    private fun isMitvInput(i: android.media.tv.TvInputInfo): Boolean {
+        val pkg = i.serviceInfo.packageName.lowercase()
+        return pkg.contains("mitv") || pkg.contains("xiaomi")
     }
 
     private fun refreshFavs() {

@@ -79,9 +79,36 @@ fun recoverPin(c: Context, done: () -> Unit) {
     }
 }
 
+/** Nguồn khi bật TV: "off" | "app" (ứng dụng đã chọn, mặc định là TV Launcher) | "in:<id đầu vào>". Tương thích bản cũ (công tắc "boot") */
+fun bootSrc(c: Context): String = Apps.str(c, "boot_src") ?: if (Apps.bool(c, "boot", false)) "app" else "off"
+
+/** Các cổng vào HDMI/AV của TV: (id, tên hiển thị) */
+fun bootInputs(c: Context): List<Pair<String, String>> = try {
+    val tm = c.getSystemService(Context.TV_INPUT_SERVICE) as android.media.tv.TvInputManager
+    tm.tvInputList.filter { it.isPassthroughInput }.map { i ->
+        val l = (i.loadCustomLabel(c) ?: i.loadLabel(c))?.toString()?.trim().orEmpty()
+        i.id to l.ifEmpty { when (i.type) {
+            android.media.tv.TvInputInfo.TYPE_HDMI -> "HDMI"; android.media.tv.TvInputInfo.TYPE_COMPOSITE -> "AV"
+            android.media.tv.TvInputInfo.TYPE_VGA -> "VGA"; android.media.tv.TvInputInfo.TYPE_COMPONENT -> "Component"
+            else -> "Đầu vào khác" } }
+    }.sortedWith(compareBy({ !it.second.startsWith("HDMI", true) }, { it.second.lowercase() }))
+} catch (e: Exception) { emptyList() }
+
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(c: Context, i: Intent) {
-        if (Apps.bool(c, "boot", false)) c.startActivity(Intent(c, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        val src = bootSrc(c)
+        val self = Intent(c, MainActivity::class.java)
+        when {
+            src == "off" -> {}
+            src.startsWith("in:") -> {
+                if (!safeStart(c, Intent(Intent.ACTION_VIEW, android.media.tv.TvContract.buildChannelUriForPassthroughInput(src.substring(3))))) safeStart(c, self)
+            }
+            else -> {
+                val pkg = Apps.str(c, "boot_app")
+                val launch = if (pkg == null || pkg == c.packageName) null else c.packageManager.getLaunchIntentForPackage(pkg)
+                safeStart(c, launch ?: self)
+            }
+        }
     }
 }
 
@@ -145,13 +172,13 @@ class SettingsActivity : VActivity() {
         item("Trợ lý giọng nói", vp?.let { p -> Apps.loadAll(this).firstOrNull { it.pkg == p }?.label } ?: "Tự động", false, null, { Apps.del(this, "voice_pkg") }) { chooseVoice() }
         choice("Chiều cao danh mục", "cat_h", arrayOf("Thấp", "Vừa", "Cao"), 1)
         choice("Bo góc ứng dụng", "radius", arrayOf("Vuông", "Vừa", "Tròn"), 1)
-        toggle("Khởi động cùng thiết bị", "boot", false)
+        item("Khởi động cùng thiết bị", bootLabel(), false, null, { Apps.del(this, "boot_src", "boot", "boot_app") }) { bootDialog() }
         choice("Số cột ứng dụng", "cols", arrayOf("4", "5", "6", "7", "8"), 2)
         val clear = { Apps.del(this, "bg_uri", "bg_type") }
         item("Thay đổi ảnh nền", bgLabel("image"), false, null, clear) { pick("image/*", 1) }
         item("Đặt video làm ảnh nền", bgLabel("video"), false, null, clear) { pick("video/*", 2) }
-        choice("Độ phân giải video nền", "res", arrayOf("Gốc", "Full HD (1080p)", "2K (1440p)", "4K (2160p)"), 0)
-        choice("Thay đổi màu sắc", "color", arrayOf("Mặc định", "Xanh dương", "Tím", "Đỏ", "Xanh lá"), 0)
+        choice("Cài đặt độ phân giải ảnh nền", "imgres", arrayOf("Full HD (1080p)", "2K (1440p)", "4K (2160p)", "Gốc"), 0)
+        choice("Cài đặt độ phân giải video hình nền", "res", arrayOf("Gốc", "Full HD (1080p)", "2K (1440p)", "4K (2160p)"), 0)
         choice("Múi giờ", "tz", arrayOf("Theo hệ thống TV", "Việt Nam (GMT+7)", "UTC", "Nhật Bản (GMT+9)", "New York", "Trung Quốc (GMT+8)"), 1)
         toggle("Hiển thị lịch âm", "lunar", true)
         item("Hiển thị tiện ích thời tiết", null, false, !Apps.isHidden(this, "@weather"), { Apps.setHidden(this, "@weather", false) }) {
@@ -160,6 +187,7 @@ class SettingsActivity : VActivity() {
             Apps.setHidden(this, "@favs", !Apps.isHidden(this, "@favs")); build() }
         item("Hiển thị hàng Đầu vào (HDMI, VGA...)", null, false, !Apps.isHidden(this, "@inputs"), { Apps.setHidden(this, "@inputs", false) }) {
             Apps.setHidden(this, "@inputs", !Apps.isHidden(this, "@inputs")); build() }
+        toggle("Hiển thị đầu vào MiTV", "mitv", false)
         item("Vị trí hàng Đầu vào", if (Apps.inputsAbove(this)) "Trên Yêu thích" else "Dưới Yêu thích", false, null, { Apps.setInputsAbove(this, false) }) {
             Apps.setInputsAbove(this, !Apps.inputsAbove(this)); build() }
         toggle("Cho phép chọn tiện ích", "pick", true)
@@ -168,7 +196,7 @@ class SettingsActivity : VActivity() {
             Apps.del(this, "cw_lock", "wx_place")
             Apps.setInputsAbove(this, false)
             Toast.makeText(this, "Đã thiết lập lại", Toast.LENGTH_SHORT).show(); build() }
-        item("Hiện lại ứng dụng đã ẩn", null, false, null, null) { Apps.showAllApps(this); Toast.makeText(this, "Đã hiện lại các ứng dụng đã ẩn", Toast.LENGTH_SHORT).show() }
+        item("Hiện lại ứng dụng đã ẩn", null, false, null, null) { hiddenAppsDialog() }
         choice("Kích thước ứng dụng", "appsize", arrayOf("Nhỏ", "Vừa", "Lớn"), 1)
         item("Dịch vụ trợ năng", enabledServices().size.let { if (it == 0) "Tắt" else "Bật ($it)" }, false, null, null) { accessibilityDialog() }
         choice("Cỡ chữ", "fontsz", arrayOf("Vừa", "Lớn", "Rất lớn"), 0)
@@ -208,6 +236,69 @@ class SettingsActivity : VActivity() {
 
     private fun toggle(title: String, key: String, def: Boolean) {
         item(title, null, false, Apps.bool(this, key, def), { Apps.del(this, key) }) { Apps.putBool(this, key, !Apps.bool(this, key, def)); build() }
+    }
+
+    // Danh sách tất cả ứng dụng đã ẩn: tích chọn từng ứng dụng để bỏ ẩn, hoặc bỏ ẩn tất cả
+    private fun hiddenAppsDialog() {
+        val hidden = Apps.loadAll(this).filter { Apps.isHidden(this, it.pkg) }
+        if (hidden.isEmpty()) { toast(this, "Không có ứng dụng nào đang ẩn"); return }
+        val checked = BooleanArray(hidden.size)
+        AlertDialog.Builder(this).setTitle("Ứng dụng đã ẩn (${hidden.size})")
+            .setMultiChoiceItems(hidden.map { it.label }.toTypedArray(), checked) { _, i, v -> checked[i] = v }
+            .setPositiveButton("Bỏ ẩn ứng dụng đã chọn") { _, _ ->
+                val sel = hidden.filterIndexed { i, _ -> checked[i] }
+                if (sel.isEmpty()) toast(this, "Chưa tích chọn ứng dụng nào")
+                else { sel.forEach { Apps.setHidden(this, it.pkg, false) }; toast(this, "Đã bỏ ẩn ${sel.size} ứng dụng") }
+            }
+            .setNeutralButton("Bỏ ẩn tất cả ứng dụng") { _, _ -> Apps.showAllApps(this); toast(this, "Đã bỏ ẩn tất cả ứng dụng") }
+            .setNegativeButton("Đóng", null).show()
+    }
+
+    private fun bootAppLabel(): String {
+        val p = Apps.str(this, "boot_app")
+        return if (p == null || p == packageName) "TV Launcher" else Apps.loadAll(this).firstOrNull { it.pkg == p }?.label ?: "TV Launcher"
+    }
+
+    private fun bootLabel(): String {
+        val s = bootSrc(this)
+        return when {
+            s == "off" -> "Tắt"
+            s.startsWith("in:") -> bootInputs(this).firstOrNull { "in:" + it.first == s }?.second ?: "Đầu vào"
+            else -> "Ứng dụng: " + bootAppLabel()
+        }
+    }
+
+    // Chọn nguồn khi bật TV: HDMI/AV, ứng dụng (nhấn giữ để đổi ứng dụng) hoặc tắt
+    private fun bootDialog() {
+        val ins = bootInputs(this)
+        val cur = bootSrc(this)
+        val labels = ins.map { it.second } + ("Ứng dụng (Nhấn giữ để thay đổi)" + (if (Apps.str(this, "boot_app").let { it != null && it != packageName }) ": " + bootAppLabel() else "")) + "Tắt"
+        val checked = when {
+            cur == "off" -> ins.size + 1
+            cur.startsWith("in:") -> ins.indexOfFirst { "in:" + it.first == cur }.let { if (it < 0) ins.size + 1 else it }
+            else -> ins.size
+        }
+        val dlg = AlertDialog.Builder(this).setTitle("Khởi động cùng thiết bị")
+            .setSingleChoiceItems(labels.toTypedArray(), checked) { d, i ->
+                when { i < ins.size -> Apps.putStr(this, "boot_src", "in:" + ins[i].first); i == ins.size -> Apps.putStr(this, "boot_src", "app"); else -> Apps.putStr(this, "boot_src", "off") }
+                d.dismiss(); build()
+            }.create()
+        dlg.show()
+        dlg.listView.setOnItemLongClickListener { _, _, pos, _ -> if (pos == ins.size) { dlg.dismiss(); pickBootApp() }; true }
+    }
+
+    private fun pickBootApp() {
+        val apps = Apps.loadAll(this)
+        val ad = object : ArrayAdapter<AppItem>(this, 0, apps) {
+            override fun getView(p: Int, v: android.view.View?, g: android.view.ViewGroup): android.view.View = LinearLayout(context).apply {
+                gravity = Gravity.CENTER_VERTICAL; setPadding(dp(16), dp(8), dp(16), dp(8))
+                addView(ImageView(context).apply { setImageDrawable(apps[p].icon) }, LinearLayout.LayoutParams(dp(40), dp(40)))
+                addView(TextView(context).apply { text = apps[p].label; textSize = 18f; setPadding(dp(16), 0, 0, 0) })
+            }
+        }
+        AlertDialog.Builder(this).setTitle("Chọn một ứng dụng").setAdapter(ad) { _, i ->
+            Apps.putStr(this, "boot_app", apps[i].pkg); Apps.putStr(this, "boot_src", "app"); build()
+        }.show()
     }
 
     private fun bgLabel(type: String): String {
