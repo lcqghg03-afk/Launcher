@@ -437,9 +437,9 @@ class MainActivity : VActivity() {
         // Yêu thích
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            addView(rowTitle("Yêu thích", "@favs", "Hàng yêu thích"))
+            addView(rowTitle("Yêu thích", "@favs", "Hàng yêu thích") { favRow }, LinearLayout.LayoutParams(-2, -2))
             favRow = LinearLayout(this@MainActivity)
-            addView(HorizontalScrollView(this@MainActivity).apply { addView(favRow) })
+            addView(HorizontalScrollView(this@MainActivity).apply { isFocusable = false; addView(favRow) })
             setOnLongClickListener { blockMenu(this@MainActivity, "@favs", "Hàng yêu thích") { applyAll() }; true }
         }
         favBox = box
@@ -447,9 +447,9 @@ class MainActivity : VActivity() {
         // Đầu vào: HDMI 1/2/3, VGA, AV... mặc định nằm DƯỚI hàng Yêu thích (đổi lên/xuống được, xem applyOrder)
         val ibox = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            addView(rowTitle("Đầu vào", "@inputs", "Hàng đầu vào"))
+            addView(rowTitle("Đầu vào", "@inputs", "Hàng đầu vào") { inputRow }, LinearLayout.LayoutParams(-2, -2))
             inputRow = LinearLayout(this@MainActivity)
-            addView(HorizontalScrollView(this@MainActivity).apply { addView(inputRow) })
+            addView(HorizontalScrollView(this@MainActivity).apply { isFocusable = false; addView(inputRow) })
             setOnLongClickListener { blockMenu(this@MainActivity, "@inputs", "Hàng đầu vào") { applyAll() }; true }
         }
         inputBox = ibox
@@ -578,12 +578,19 @@ class MainActivity : VActivity() {
     }
 
     // Tiêu đề của một hàng: bấm OK (hoặc giữ) để đổi kích thước / chuyển lên-xuống / ẩn
-    private fun rowTitle(label: String, key: String, name: String) = TextView(this).apply {
+    private fun rowTitle(label: String, key: String, name: String, row: () -> android.view.ViewGroup) = TextView(this).apply {
         text = label; setTextColor(Color.WHITE); textSize = 14f
         setPadding(dp(12), dp(4), dp(12), dp(4)); isFocusable = true; isClickable = true
         background = focusBg(this@MainActivity)
         setOnClickListener { blockMenu(this@MainActivity, key, name) { applyAll() } }
         setOnLongClickListener { blockMenu(this@MainActivity, key, name) { applyAll() }; true }
+        // Bấm XUỐNG từ tiêu đề: vào thẳng ô đầu tiên của hàng, không để Android tự đoán rồi nhảy sang hàng khác
+        setOnKeyListener { _, code, e ->
+            if (code == KeyEvent.KEYCODE_DPAD_DOWN && e.action == KeyEvent.ACTION_DOWN) {
+                val first = row().getChildAt(0)
+                if (first != null && first.isFocusable) { first.requestFocus(); true } else false
+            } else false
+        }
     }
 
     // Sắp xếp hai hàng dưới cùng: mặc định Yêu thích ở trên, Đầu vào ở dưới
@@ -601,6 +608,29 @@ class MainActivity : VActivity() {
     // Bấm bánh răng (hoặc phím Menu) mở thẳng cài đặt TV Launcher. Cài đặt hệ thống của TV nằm bên trong đó
     private fun settingsMenu() {
         guard(this) { safeStart(this, Intent(this, SettingsActivity::class.java)) }
+    }
+
+    // Phím TRÁI/PHẢI đi lần lượt qua mọi mục ở màn hình chính theo thứ tự (trên xuống dưới, trái sang phải),
+    // hết cuối thì quay về đầu, giống màn hình Tất cả ứng dụng. Ô giờ/thời tiết dùng TRÁI/PHẢI để đổi cỡ
+    // nên chỉ nằm trong vòng khi đã bật "Khoá kích thước"; vào ô đó bằng phím XUỐNG từ Wi-Fi/Cài đặt
+    override fun dispatchKeyEvent(e: KeyEvent): Boolean {
+        val code = e.keyCode
+        if (e.action == KeyEvent.ACTION_DOWN && (code == KeyEvent.KEYCODE_DPAD_LEFT || code == KeyEvent.KEYCODE_DPAD_RIGHT)) {
+            val cur = currentFocus
+            val resizing = !Apps.bool(this, "cw_lock", false)
+            if (cur != null && !(cur === cwBox && resizing)) {
+                val order = ArrayList<View>()
+                window.decorView.addFocusables(order, View.FOCUS_FORWARD, View.FOCUSABLES_ALL)
+                if (resizing) order.remove(cwBox)
+                val i = order.indexOf(cur)
+                if (i >= 0 && order.size > 1) {
+                    val n = order.size
+                    order[if (code == KeyEvent.KEYCODE_DPAD_RIGHT) (i + 1) % n else (i - 1 + n) % n].requestFocus()
+                    return true
+                }
+            }
+        }
+        return super.dispatchKeyEvent(e)
     }
 
     // Phím Menu (≡) trên điều khiển Xiaomi mở nhanh cài đặt; phím Back không thoát launcher
@@ -821,6 +851,20 @@ class AllAppsActivity : VActivity() {
             // Bấm OK / chạm = mở ứng dụng, giữ lâu = menu tuỳ chỉnh
             setOnItemClickListener { _, _, p, _ -> if (p in apps.indices) openApp(me, apps[p]) }
             setOnItemLongClickListener { _, _, p, _ -> if (p in apps.indices) showMenu(me, apps[p]) { fill() }; true }
+            // Chạy vòng: PHẢI ở cuối hàng -> xuống đầu hàng kế (ô cuối cùng -> về ô đầu tiên);
+            // TRÁI ở đầu hàng -> lên cuối hàng trên (ô đầu tiên -> về ô cuối cùng)
+            val cols = 4 + Apps.int(me, "cols", 2)
+            setOnKeyListener { _, code, e ->
+                val n = apps.size; val p = selectedItemPosition
+                if (e.action == KeyEvent.ACTION_DOWN && n > 1 && p in 0 until n) {
+                    val t = when {
+                        code == KeyEvent.KEYCODE_DPAD_RIGHT && (p % cols == cols - 1 || p == n - 1) -> (p + 1) % n
+                        code == KeyEvent.KEYCODE_DPAD_LEFT && p % cols == 0 -> (p - 1 + n) % n
+                        else -> -1
+                    }
+                    if (t >= 0) { setSelection(t); true } else false
+                } else false
+            }
             setOnItemSelectedListener(object : AdapterView.OnItemSelectedListener {
                 override fun onItemSelected(parent: AdapterView<*>?, v: View?, p: Int, id: Long) { if (p in apps.indices && Apps.bool(me, "tts", false)) Speaker.say(me, apps[p].label) }
                 override fun onNothingSelected(parent: AdapterView<*>?) {}

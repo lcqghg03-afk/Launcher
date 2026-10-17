@@ -164,7 +164,7 @@ class SettingsActivity : VActivity() {
         item("Hướng dẫn cho TV Xiaomi nội địa", null, false, null, null) { xiaomiHelp() }
         val dm = android.util.DisplayMetrics(); windowManager.defaultDisplay.getRealMetrics(dm)
         item("Độ phân giải màn hình", "${dm.widthPixels}x${dm.heightPixels}", false, null, null) { toast(this, "Đây là độ phân giải TV đang xuất ra. Nếu chữ quá to hoặc quá nhỏ, hãy chọn Kích cỡ TV bên dưới.") }
-        choice("Kích cỡ TV (mốc chuẩn: 55 inch)", "tvsize", TV_SIZES, 0, true)
+        choice("Kích cỡ TV", "tvsize", TV_SIZES, 0, true)
         choice("Tinh chỉnh độ lớn giao diện", "tvfine", FINE_LABELS, 2, true)
         item("Chuyển đầu vào (HDMI/AV)", null, false, null, null) { pickInput(this) }
         item("Cài đặt hệ thống", null, false, null, null) { openSystemSettings(this) }
