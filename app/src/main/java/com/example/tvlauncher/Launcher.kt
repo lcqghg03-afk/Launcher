@@ -220,8 +220,22 @@ object Apps {
     fun tz(c: Context): String? = arrayOf<String?>(null, "Asia/Ho_Chi_Minh", "UTC", "Asia/Tokyo", "America/New_York", "Asia/Shanghai")[int(c, "tz", 1)]
     fun open(c: Context, pkg: String) {
         val pm = c.packageManager
-        val i = pm.getLeanbackLaunchIntentForPackage(pkg) ?: pm.getLaunchIntentForPackage(pkg)
-        if (i == null || !safeStart(c, i)) Toast.makeText(c, "Không mở được ứng dụng này", Toast.LENGTH_SHORT).show()
+        val list = ArrayList<Intent>()
+        pm.getLeanbackLaunchIntentForPackage(pkg)?.let { list.add(it) }
+        pm.getLaunchIntentForPackage(pkg)?.let { list.add(it) }
+        for (cat in listOf(Intent.CATEGORY_LEANBACK_LAUNCHER, Intent.CATEGORY_LAUNCHER)) {
+            try {
+                pm.queryIntentActivities(Intent(Intent.ACTION_MAIN).addCategory(cat).setPackage(pkg), 0).firstOrNull()?.let {
+                    list.add(Intent(Intent.ACTION_MAIN).addCategory(cat).setClassName(it.activityInfo.packageName, it.activityInfo.name))
+                }
+            } catch (e: Exception) {}
+        }
+        var err: String? = null
+        for (i in list) {
+            try { i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED); c.startActivity(i); return }
+            catch (e: Exception) { err = e.javaClass.simpleName }
+        }
+        Toast.makeText(c, "Không mở được ứng dụng này" + (err?.let { " ($it)" } ?: ""), Toast.LENGTH_SHORT).show()
     }
 }
 
@@ -274,10 +288,10 @@ fun showMenu(c: Context, a: AppItem, onChange: () -> Unit) {
     val fav = a.pkg in Apps.favs(c)
     val labels = ArrayList<String>(); val acts = ArrayList<() -> Unit>()
     fun row(l: String, f: () -> Unit) { labels.add(l); acts.add(f) }
+    fun toggleFav() { val l = Apps.favs(c).toMutableList(); if (fav) l.remove(a.pkg) else l.add(a.pkg); Apps.setFavs(c, l); onChange() }
+    if (fav) row("Xoá khỏi mục Yêu thích") { toggleFav() }
     row("Mở ứng dụng") { openApp(c, a) }
-    row(if (fav) "Bỏ khỏi màn hình chính" else "Thêm vào màn hình chính") {
-        val l = Apps.favs(c).toMutableList(); if (fav) l.remove(a.pkg) else l.add(a.pkg); Apps.setFavs(c, l); onChange()
-    }
+    if (!fav) row("Thêm vào mục Yêu thích") { toggleFav() }
     row("Tuỳ chỉnh kích thước") { sizeDialog(c, a.pkg, a.label, onChange) }
     row("Ẩn ứng dụng") { Apps.setHidden(c, a.pkg, true); onChange() }
     row(if (Apps.isLocked(c, a.pkg)) "Mở khoá ứng dụng" else "Khoá ứng dụng") {
