@@ -32,6 +32,27 @@ import org.json.JSONObject
 import java.net.URL
 import kotlin.concurrent.thread
 
+/** Danh sách tỉnh/thành để chọn nơi hiển thị thời tiết thủ công (toạ độ xấp xỉ trung tâm) */
+val VN_PLACES = listOf(
+    Triple("Hà Nội", 21.0285, 105.8542), Triple("TP. Hồ Chí Minh", 10.7769, 106.7009),
+    Triple("Hải Phòng", 20.8449, 106.6881), Triple("Đà Nẵng", 16.0544, 108.2022),
+    Triple("Huế", 16.4637, 107.5909), Triple("Cần Thơ", 10.0452, 105.7469),
+    Triple("Tuyên Quang", 21.8233, 105.2141), Triple("Lào Cai", 21.7229, 104.9113),
+    Triple("Thái Nguyên", 21.5928, 105.8442), Triple("Phú Thọ", 21.3227, 105.4019),
+    Triple("Bắc Ninh", 21.1861, 106.0763), Triple("Hưng Yên", 20.6464, 106.0511),
+    Triple("Ninh Bình", 20.2506, 105.9745), Triple("Thanh Hóa", 19.8067, 105.7852),
+    Triple("Nghệ An", 18.6796, 105.6813), Triple("Hà Tĩnh", 18.3428, 105.9057),
+    Triple("Quảng Trị", 17.4690, 106.6222), Triple("Quảng Ngãi", 15.1205, 108.7923),
+    Triple("Gia Lai", 13.7829, 109.2196), Triple("Khánh Hòa", 12.2388, 109.1967),
+    Triple("Lâm Đồng", 11.9404, 108.4583), Triple("Đắk Lắk", 12.6667, 108.0378),
+    Triple("Đồng Nai", 10.9574, 106.8427), Triple("Tây Ninh", 11.3100, 106.0983),
+    Triple("Vĩnh Long", 10.2537, 105.9722), Triple("Đồng Tháp", 10.4938, 105.6882),
+    Triple("An Giang", 10.3759, 105.4185), Triple("Cà Mau", 9.1769, 105.1524),
+    Triple("Điện Biên", 21.3860, 103.0230), Triple("Lai Châu", 22.3964, 103.4703),
+    Triple("Sơn La", 21.3256, 103.9188), Triple("Lạng Sơn", 21.8537, 106.7615),
+    Triple("Quảng Ninh", 20.9517, 107.0807), Triple("Cao Bằng", 22.6657, 106.2570)
+)
+
 /** Ép giao diện tiếng Việt, kể cả khi TV Xiaomi nội địa đang để tiếng Trung */
 // Kích cỡ TV: hệ số phóng to/thu nhỏ toàn bộ giao diện. 55 inch là mốc chuẩn (1.0)
 val TV_SIZES = arrayOf("Tự động (theo TV)", "32 inch", "43 inch", "50 inch", "55 inch", "65 inch", "75 inch", "85 inch", "98 inch")
@@ -300,7 +321,8 @@ fun applyBlock(c: Context, v: View, key: String, px: Float, py: Float, reflow: B
 class MainActivity : VActivity() {
     private lateinit var favRow: LinearLayout
     private lateinit var weather: TextView
-    private lateinit var clockBox: View
+    private lateinit var cwBox: LinearLayout
+    private lateinit var timeRow: LinearLayout
     private lateinit var lunar: TextView
     private var scaleKey = 0
     private val tick = android.os.Handler(android.os.Looper.getMainLooper())
@@ -327,14 +349,17 @@ class MainActivity : VActivity() {
         }
         root.addView(left, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START).apply { setMargins(dp(40), dp(24), 0, 0) })
 
-        // Phải, từ trên xuống: Wi-Fi + cài đặt, giờ + ngày, thời tiết (nút Đầu vào nằm trong Cài đặt Home TV)
+        // Phải trên cùng: Wi-Fi + cài đặt. Đứng yên một chỗ, không bị ô giờ/thời tiết ảnh hưởng
         val icons = LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL
             addView(iconBtn(R.drawable.ic_wifi, "Wi-Fi") { if (!safeStart(this@MainActivity, Intent(Settings.ACTION_WIFI_SETTINGS))) openSystemSettings(this@MainActivity) })
             addView(iconBtn(R.drawable.ic_settings, "Cài đặt") { settingsMenu() })
         }
-        clockBox = LinearLayout(this@MainActivity).apply {
-            gravity = Gravity.CENTER_VERTICAL; isFocusable = true
+        root.addView(icons, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.END).apply { setMargins(0, dp(24), dp(40), 0) })
+
+        // Ô độc lập: giờ + ngày + âm lịch ở trên, thời tiết ở dưới. Phóng to/thu nhỏ bằng thanh gạt, không đụng tới thứ khác
+        timeRow = LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL
             addView(TextClock(this@MainActivity).apply { format24Hour = "HH:mm"; format12Hour = "HH:mm"; timeZone = Apps.tz(this@MainActivity); textSize = 26f; setTextColor(Color.WHITE) })
             lunar = TextView(this@MainActivity).apply { textSize = 11f; setTextColor(Color.WHITE) }
             addView(LinearLayout(this@MainActivity).apply {
@@ -342,25 +367,21 @@ class MainActivity : VActivity() {
                 addView(TextClock(this@MainActivity).apply { format24Hour = "EEEE, d 'tháng' M, yyyy"; format12Hour = format24Hour; timeZone = Apps.tz(this@MainActivity); textSize = 11f; setTextColor(Color.WHITE) })
                 addView(lunar)
             })
-            setOnLongClickListener { blockMenu(this@MainActivity, "@clock", "Giờ và ngày") { applyAll() }; true }
         }
-        val rightCol = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.END }
-        rightCol.addView(icons)
-        rightCol.addView(clockBox)
-        root.addView(rightCol, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.END).apply { setMargins(0, dp(24), dp(40), 0) })
-
-        // Widget thời tiết: gọn một dòng, nằm sát dưới giờ
         weather = TextView(this).apply {
-            text = "Đang tải thời tiết…"; setTextColor(Color.WHITE); textSize = 15f; gravity = Gravity.CENTER; maxLines = 1
-            setPadding(dp(14), dp(6), dp(14), dp(6))
-            background = GradientDrawable().apply { cornerRadius = dp(16).toFloat(); setStroke(dp(1), 0x88FFFFFF.toInt()); setColor(0x44000000) }
+            text = "Đang tải thời tiết…"; setTextColor(Color.WHITE); textSize = 15f; maxLines = 1
+            setPadding(0, dp(6), 0, 0)
         }
-        weather.isFocusable = true
-        weather.setOnLongClickListener { blockMenu(this, "@weather", "Tiện ích thời tiết") { applyAll() }; true }
-        rightCol.addView(weather, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(2) })
-        // Chọn giờ hoặc thời tiết rồi bấm phím TRÁI để thu nhỏ, PHẢI để phóng lớn (hoặc kéo trái/phải bằng chuột, cảm ứng)
-        attachResize(clockBox, "@clock", "Giờ và ngày")
-        attachResize(weather, "@weather", "Thời tiết")
+        cwBox = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; isFocusable = true; isClickable = true
+            setPadding(dp(16), dp(10), dp(16), dp(12)); background = chipBg(this@MainActivity)
+            addView(timeRow); addView(weather)
+            setOnClickListener { boxSettings() }
+            setOnLongClickListener { boxMenu(); true }
+        }
+        root.addView(cwBox, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.END).apply { setMargins(0, dp(84), dp(40), 0) })
+        // Chọn ô rồi bấm phím TRÁI để thu nhỏ, PHẢI để phóng lớn (hoặc kéo trái/phải bằng chuột, cảm ứng)
+        attachBoxResize()
 
         // Yêu thích
         val box = LinearLayout(this).apply {
@@ -389,26 +410,23 @@ class MainActivity : VActivity() {
 
     private var resizeToast: Toast? = null
 
-    private fun attachResize(v: View, key: String, name: String) {
-        val normal = v.background
-        v.setOnFocusChangeListener { _, f ->
-            v.background = if (f) GradientDrawable().apply { cornerRadius = dp(16).toFloat(); setColor(0x55FFFFFF); setStroke(dp(2), Color.WHITE) } else normal
-        }
+    private fun attachBoxResize() {
+        val v: View = cwBox
         fun change(ns: Float) {
             val s = ns.coerceIn(0.5f, 2.5f)
-            Apps.setScale(this, key, s); applyTexts()
+            Apps.setScale(this, "@clock", s); applyBox()
             resizeToast?.cancel()
-            resizeToast = Toast.makeText(this, "$name: ${(s * 100).toInt()}%", Toast.LENGTH_SHORT).also { it.show() }
+            resizeToast = Toast.makeText(this, "Giờ và thời tiết: ${(s * 100).toInt()}%", Toast.LENGTH_SHORT).also { it.show() }
         }
         v.setOnKeyListener { _, code, e ->
             if (e.action == KeyEvent.ACTION_DOWN && (code == KeyEvent.KEYCODE_DPAD_LEFT || code == KeyEvent.KEYCODE_DPAD_RIGHT)) {
-                change(Apps.scale(this, key) + (if (code == KeyEvent.KEYCODE_DPAD_RIGHT) 0.1f else -0.1f)); true
+                change(Apps.scale(this, "@clock") + (if (code == KeyEvent.KEYCODE_DPAD_RIGHT) 0.1f else -0.1f)); true
             } else false
         }
         var downX = 0f; var start = 1f; var drag = false
         v.setOnTouchListener { _, ev ->
             when (ev.actionMasked) {
-                MotionEvent.ACTION_DOWN -> { downX = ev.rawX; start = Apps.scale(this, key); drag = false; false }
+                MotionEvent.ACTION_DOWN -> { downX = ev.rawX; start = Apps.scale(this, "@clock"); drag = false; false }
                 MotionEvent.ACTION_MOVE -> {
                     val dx = ev.rawX - downX
                     if (!drag && Math.abs(dx) > dp(12)) { drag = true; v.cancelLongPress() }
@@ -420,18 +438,64 @@ class MainActivity : VActivity() {
         }
     }
 
-    // Cỡ chữ của giờ, ngày, lịch âm và thời tiết theo kích thước đã chọn (đổi cỡ chữ thật nên không đè lên nhau)
+    // Phóng to/thu nhỏ cả ô giờ + thời tiết quanh góc phải-trên. Dùng scale hình nên KHÔNG đẩy Wi-Fi, cài đặt hay khối khác
+    private fun applyBox() {
+        val hideClock = Apps.isHidden(this, "@clock"); val hideWeather = Apps.isHidden(this, "@weather")
+        timeRow.visibility = if (hideClock) View.GONE else View.VISIBLE
+        weather.visibility = if (hideWeather) View.GONE else View.VISIBLE
+        cwBox.visibility = if (hideClock && hideWeather) View.GONE else View.VISIBLE
+        val s = Apps.scale(this, "@clock"); cwBox.scaleX = s; cwBox.scaleY = s
+        cwBox.pivotX = cwBox.width.toFloat(); cwBox.pivotY = 0f
+        cwBox.post { cwBox.pivotX = cwBox.width.toFloat(); cwBox.pivotY = 0f }
+    }
+
+    // Bấm vào ô: chọn tỉnh/thành cho thời tiết + thanh gạt kích thước
+    private fun boxSettings() {
+        val c = this
+        val col = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(24), dp(16), dp(24), 0) }
+        col.addView(TextView(c).apply { text = "Nơi hiển thị thời tiết" })
+        val names = listOf("Tự động (theo mạng)") + VN_PLACES.map { it.first }
+        val sp = Spinner(c)
+        sp.adapter = ArrayAdapter(c, android.R.layout.simple_spinner_dropdown_item, names)
+        sp.setSelection(names.indexOf(Apps.str(c, "wx_place")).coerceAtLeast(0))
+        col.addView(sp)
+        col.addView(TextView(c).apply { text = "Kích thước: gạt trái = nhỏ, gạt phải = lớn"; setPadding(0, dp(20), 0, 0) })
+        val bar = SeekBar(c).apply {
+            max = 100
+            progress = (((Apps.scale(c, "@clock") - 0.5f) / 2f) * 100).toInt().coerceIn(0, 100)
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(sb: SeekBar, p: Int, fromUser: Boolean) {
+                    if (fromUser) { Apps.setScale(c, "@clock", 0.5f + 2f * p / 100f); applyBox() }
+                }
+                override fun onStartTrackingTouch(sb: SeekBar) {}
+                override fun onStopTrackingTouch(sb: SeekBar) {}
+            })
+        }
+        col.addView(bar)
+        AlertDialog.Builder(c).setTitle("Giờ và thời tiết").setView(col)
+            .setPositiveButton("Lưu") { _, _ ->
+                val i = sp.selectedItemPosition
+                if (i == 0) Apps.del(c, "wx_place") else Apps.putStr(c, "wx_place", names[i])
+                weather.text = "Đang tải thời tiết…"
+                loadWeather()
+            }.setNegativeButton("Đóng", null).show()
+    }
+
+    private fun boxMenu() {
+        AlertDialog.Builder(this).setTitle("Giờ và thời tiết")
+            .setItems(arrayOf("Chọn nơi ở và kích thước", "Ẩn mục này")) { _, i ->
+                if (i == 0) boxSettings() else { Apps.setHidden(this, "@clock", true); Apps.setHidden(this, "@weather", true); applyAll() }
+            }.show()
+    }
+
+    // Cỡ chữ của giờ, ngày, lịch âm và thời tiết theo cỡ chữ chung
     private fun applyTexts() {
         val fs = Apps.fs(this)
-        val ws = Apps.scale(this, "@weather"); val cs = Apps.scale(this, "@clock")
-        weather.textSize = 15f * fs * ws
-        weather.setPadding(dp((14 * ws).toInt()), dp((6 * ws).toInt()), dp((14 * ws).toInt()), dp((6 * ws).toInt()))
-        (clockBox as LinearLayout).let {
-            (it.getChildAt(0) as TextView).textSize = 26f * fs * cs
-            val d = it.getChildAt(1) as LinearLayout
-            (d.getChildAt(0) as TextView).textSize = 11f * fs * cs
-            lunar.textSize = 11f * fs * cs
-        }
+        weather.textSize = 15f * fs
+        (timeRow.getChildAt(0) as TextView).textSize = 26f * fs
+        val d = timeRow.getChildAt(1) as LinearLayout
+        (d.getChildAt(0) as TextView).textSize = 11f * fs
+        lunar.textSize = 11f * fs
     }
 
     // Tiêu đề của một hàng: bấm OK (hoặc giữ) để đổi kích thước / chuyển lên-xuống / ẩn
@@ -534,8 +598,7 @@ class MainActivity : VActivity() {
         applyTexts()
         applyOrder()
         refreshFavs()
-        applyBlock(this, weather, "@weather", 1f, 0f, true)
-        applyBlock(this, clockBox, "@clock", 1f, 0f, true)
+        applyBox()
         applyBlock(this, favBox, "@favs", 0f, 1f)
         applyBlock(this, inputBox, "@inputs", 0f, 1f)
     }
@@ -590,8 +653,10 @@ class MainActivity : VActivity() {
         Apps.favs(this).mapNotNull { all[it] }.forEach { favRow.addView(appView(this, it) { applyAll() }) }
     }
 
-    // Nơi ở theo IP (không cần GPS). Thử lần lượt nhiều dịch vụ vì TV Xiaomi nội địa có thể chặn/lỗi một số trang
+    // Nơi ở: ưu tiên tỉnh/thành người dùng đã chọn thủ công, nếu không thì dò theo IP (không cần GPS).
+    // Thử lần lượt nhiều dịch vụ vì TV Xiaomi nội địa có thể chặn/lỗi một số trang
     private fun locate(): Triple<String, Double, Double> {
+        Apps.str(this, "wx_place")?.let { n -> VN_PLACES.firstOrNull { it.first == n }?.let { return it } }
         val now = System.currentTimeMillis()
         val old = Apps.str(this, "loc")?.split("|")?.takeIf { it.size == 3 }
         val ts = Apps.str(this, "loc_ts")?.toLongOrNull() ?: 0L
