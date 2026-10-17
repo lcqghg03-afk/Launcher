@@ -145,7 +145,8 @@ class SettingsActivity : VActivity() {
         item("Kho ứng dụng (DL Store, v.v.)", null, false, null, null) { guard(this) { storesDialog() } }
         item("Quyền ứng dụng", null, false, null, null) { permissionDialog() }
         item("Khoá ứng dụng", if (Apps.str(this, "pin") == null) "Tắt" else "Đang bật", true, null, null) { lockDialog() }
-        list.addView(TextView(this).apply { text = "(Nhấn giữ nút OK để về mặc định)"; textSize = 14f; setTextColor(Color.WHITE); gravity = Gravity.CENTER; setPadding(0, dp(24), 0, 0) })
+        item("Khôi phục cài đặt TV Launcher", null, true, null, null) { guard(this) { confirmReset() } }
+        list.addView(TextView(this).apply { text = "TV Launcher By Lộc Hưng"; textSize = 14f; setTextColor(Color.WHITE); gravity = Gravity.CENTER; setPadding(0, dp(24), 0, 0) })
     }
 
     private fun item(title: String, value: String?, red: Boolean, checked: Boolean?, reset: (() -> Unit)?, click: () -> Unit) {
@@ -352,6 +353,30 @@ class SettingsActivity : VActivity() {
             addView(t("Cảm ơn bạn đã sử dụng!", 14f))
         }
         AlertDialog.Builder(this).setView(ScrollView(this).apply { setBackgroundColor(0xFF1C1C24.toInt()); addView(box) }).setPositiveButton("Đóng", null).show()
+    }
+
+    /** Hỏi xác nhận trước khi khôi phục toàn bộ cài đặt */
+    private fun confirmReset() {
+        AlertDialog.Builder(this).setTitle("Khôi phục cài đặt TV Launcher")
+            .setMessage("Toàn bộ cài đặt (giao diện, ảnh nền, tiện ích, ứng dụng ẩn...) sẽ về mặc định. Mã PIN khoá ứng dụng được giữ nguyên.")
+            .setPositiveButton("Khôi phục") { _, _ -> resetAll() }
+            .setNegativeButton("Huỷ", null).show()
+    }
+
+    /** Xoá toàn bộ cài đặt về mặc định (giữ lại PIN và Gmail khôi phục) */
+    private fun resetAll() {
+        Apps.del(this,
+            "tvsize", "tvfine", "voice_pkg", "cat_h", "radius", "boot", "cols",
+            "bg_uri", "bg_type", "res", "color", "tz", "lunar", "pick",
+            "appsize", "fontsz", "hc", "rm", "tts", "cw_lock", "wx_place")
+        listOf("@weather", "@clock", "@favs", "@inputs").forEach {
+            Apps.setHidden(this, it, false)
+            Apps.del(this, "size_$it", "fs_$it")
+        }
+        Apps.setInputsAbove(this, false)
+        Apps.showAllApps(this)
+        toast(this, "Đã khôi phục cài đặt mặc định")
+        recreate()
     }
 
     private fun lockDialog() {
