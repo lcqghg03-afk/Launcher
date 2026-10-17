@@ -8,17 +8,18 @@ permissions:
   contents: write
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 17
-      - uses: android-actions/setup-android@v3
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 8.7
+      - name: Chap nhan giay phep Android SDK
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
       - name: Build release APK
         run: gradle assembleRelease --no-daemon
       - name: Doi ten APK
@@ -31,6 +32,3 @@ jobs:
           body: Tai file TVLauncher.apk ben duoi roi cai len TV.
           files: TVLauncher.apk
           make_latest: true
-          # lan 2
-  
-          
