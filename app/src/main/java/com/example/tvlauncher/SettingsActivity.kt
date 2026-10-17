@@ -98,7 +98,7 @@ class SettingsActivity : VActivity() {
 
     private fun build() {
         list.removeAllViews()
-        list.addView(TextView(this).apply { text = "Cài đặt Home TV"; textSize = 24f; setTextColor(0xFF4D6BFF.toInt()); setPadding(dp(24), 0, 0, dp(12)) })
+        list.addView(TextView(this).apply { text = "TV Launcher"; textSize = 24f; setTextColor(0xFF4D6BFF.toInt()); setPadding(dp(24), 0, 0, dp(12)) })
         item("Giới thiệu", "v1.3", false, null, null) { showAbout() }
         item("Hướng dẫn cho TV Xiaomi nội địa", null, false, null, null) { xiaomiHelp() }
         val dm = android.util.DisplayMetrics(); windowManager.defaultDisplay.getRealMetrics(dm)
@@ -131,6 +131,7 @@ class SettingsActivity : VActivity() {
         toggle("Cho phép chọn tiện ích", "pick", true)
         item("Thiết lập lại tiện ích", null, false, null, null) {
             listOf("@weather", "@clock", "@favs", "@inputs").forEach { Apps.setHidden(this, it, false); Apps.del(this, "size_$it", "fs_$it") }
+            Apps.del(this, "cw_lock", "wx_place")
             Apps.setInputsAbove(this, false)
             Toast.makeText(this, "Đã thiết lập lại", Toast.LENGTH_SHORT).show(); build() }
         item("Hiện lại ứng dụng đã ẩn", null, false, null, null) { Apps.showAllApps(this); Toast.makeText(this, "Đã hiện lại các ứng dụng đã ẩn", Toast.LENGTH_SHORT).show() }
@@ -246,7 +247,7 @@ class SettingsActivity : VActivity() {
 
     private fun xiaomiHelp() {
         AlertDialog.Builder(this).setTitle("Hướng dẫn cho TV Xiaomi nội địa").setMessage(
-            "• Phím Menu (≡) trên điều khiển mở nhanh cài đặt của Home TV.\n" +
+            "• Phím Menu (≡) trên điều khiển mở nhanh cài đặt của TV Launcher.\n" +
             "• Nút Home của Xiaomi có thể vẫn về giao diện gốc (PatchWall). Hãy mở TV Launcher từ danh sách ứng dụng.\n" +
             "• Muốn nút Home mở thẳng TV Launcher: vào Cài đặt hệ thống tìm mục ứng dụng mặc định / màn hình chính (nếu TV có). " +
             "Nếu không có, có thể đặt bằng ADB: adb shell cmd package set-home-activity com.example.tvlauncher/.MainActivity\n" +
@@ -309,7 +310,7 @@ class SettingsActivity : VActivity() {
 
     private fun unknownDialog() {
         AlertDialog.Builder(this).setTitle("Cài app không rõ nguồn gốc")
-            .setItems(arrayOf("Cho phép Home TV cài app", "Cho phép cho app khác…", "Mở cài đặt bảo mật hệ thống")) { _, i ->
+            .setItems(arrayOf("Cho phép TV Launcher cài app", "Cho phép cho app khác…", "Mở cài đặt bảo mật hệ thống")) { _, i ->
                 when (i) {
                     0 -> unknownSources(packageName)
                     1 -> pickApp("Cho phép cài từ…", Apps.loadAll(this)) { unknownSources(it.pkg) }
