@@ -177,8 +177,13 @@ fun decodeScaled(c: Context, u: Uri, mw: Int, mh: Int): Bitmap? = try {
     c.contentResolver.openInputStream(u)?.use { BitmapFactory.decodeStream(it, null, o) }
     var s = 1
     while (o.outWidth / (s * 2) >= mw && o.outHeight / (s * 2) >= mh) s *= 2
-    val o2 = BitmapFactory.Options().apply { inSampleSize = s; inPreferredConfig = Bitmap.Config.RGB_565 }
-    c.contentResolver.openInputStream(u)?.use { BitmapFactory.decodeStream(it, null, o2) }
+    // Màu 32-bit (mặc định) cho ảnh mịn, không bị sọc ở vùng chuyển màu; hết RAM thì tự lùi về 16-bit
+    fun dec(cfg: Bitmap.Config): Bitmap? {
+        val o2 = BitmapFactory.Options().apply { inSampleSize = s; inPreferredConfig = cfg }
+        return c.contentResolver.openInputStream(u)?.use { BitmapFactory.decodeStream(it, null, o2) }
+    }
+    if (Apps.int(c, "imgq", 0) == 0) { try { dec(Bitmap.Config.ARGB_8888) } catch (e: OutOfMemoryError) { dec(Bitmap.Config.RGB_565) } }
+    else dec(Bitmap.Config.RGB_565)
 } catch (e: Throwable) { null }
 
 fun focusBg(c: Context): StateListDrawable = StateListDrawable().apply {
@@ -940,7 +945,11 @@ class MainActivity : VActivity() {
                     // Độ phân giải ảnh nền: Full HD (mặc định) / 2K / 4K / Gốc
                     val (iw, ih) = when (Apps.int(this, "imgres", 0)) { 1 -> 2560 to 1440; 2 -> 3840 to 2160; 3 -> Int.MAX_VALUE to Int.MAX_VALUE; else -> 1920 to 1080 }
                     val bmp = decodeScaled(this, u, iw, ih)
-                    runOnUiThread { if (bmp != null) iv.setImageBitmap(bmp) else Toast.makeText(this, "Không mở được ảnh nền", Toast.LENGTH_SHORT).show() }
+                    runOnUiThread { if (bmp != null) {
+                        // Sắc nét: phóng to giữ nguyên ô vuông (hợp ảnh pixel / ảnh nhỏ); Mượt: làm mịn như thường
+                        if (Apps.int(this, "imgscale", 0) == 1) iv.setImageDrawable(android.graphics.drawable.BitmapDrawable(resources, bmp).apply { setFilterBitmap(false) })
+                        else iv.setImageBitmap(bmp)
+                    } else Toast.makeText(this, "Không mở được ảnh nền", Toast.LENGTH_SHORT).show() }
                 }
             }
         } catch (e: Exception) { Toast.makeText(this, "Không mở được nền", Toast.LENGTH_SHORT).show() }

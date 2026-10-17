@@ -178,6 +178,8 @@ class SettingsActivity : VActivity() {
         item("Thay đổi ảnh nền", bgLabel("image"), false, null, clear) { pick("image/*", 1) }
         item("Đặt video làm ảnh nền", bgLabel("video"), false, null, clear) { pick("video/*", 2) }
         choice("Cài đặt độ phân giải ảnh nền", "imgres", arrayOf("Full HD (1080p)", "2K (1440p)", "4K (2160p)", "Gốc"), 0)
+        choice("Chất lượng màu ảnh nền", "imgq", arrayOf("Cao (32-bit, mịn hơn)", "Tiết kiệm RAM (16-bit)"), 0)
+        choice("Kiểu phóng to ảnh nền", "imgscale", arrayOf("Mượt (làm mịn)", "Sắc nét (giữ ô vuông, hợp ảnh pixel)"), 0)
         choice("Cài đặt độ phân giải video hình nền", "res", arrayOf("Gốc", "Full HD (1080p)", "2K (1440p)", "4K (2160p)"), 0)
         choice("Múi giờ", "tz", arrayOf("Theo hệ thống TV", "Việt Nam (GMT+7)", "UTC", "Nhật Bản (GMT+9)", "New York", "Trung Quốc (GMT+8)"), 1)
         toggle("Hiển thị lịch âm", "lunar", true)
@@ -451,7 +453,7 @@ class SettingsActivity : VActivity() {
         fun t(txt: String, sz: Float, col: Int = Color.WHITE) = TextView(this).apply { text = txt; textSize = sz; setTextColor(col); setPadding(0, dp(4), 0, dp(4)) }
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; setPadding(dp(24), dp(16), dp(24), dp(16))
-            addView(t("TV Launcher - Phiên bản 1.6", 18f))
+            addView(t("TV Launcher - Phiên bản 1.7", 18f))
             addView(t("Liên hệ tác giả", 16f, 0xFF4D6BFF.toInt()))
             addView(t("Facebook: Lộc Hưng", 16f))
             addView(t("Zalo: 0349353193", 16f))
