@@ -43,7 +43,7 @@ fun guard(c: Context, ok: () -> Unit) {
     AlertDialog.Builder(c).setTitle("Khoá ứng dụng").setView(column(c, et))
         .setPositiveButton("OK") { _, _ -> if (sha(et.text.toString()) == pin) ok() else toast(c, "Sai mã PIN") }
         .setNeutralButton("Quên mã?") { _, _ -> recoverPin(c) { ok() } }
-        .setNegativeButton("Huỷ", null).show()
+        .setNegativeButton("Huỷ", null).setCancelable(false).show()
 }
 
 /** Bật khoá: đặt PIN 4 số + Gmail khôi phục. askMail=false khi chỉ đặt lại PIN */
@@ -54,7 +54,7 @@ fun setupLock(c: Context, askMail: Boolean, done: () -> Unit) {
             if (pin.text.length != 4) toast(c, "PIN phải đủ 4 số")
             else if (askMail && !validMail(mail.text.toString().trim())) toast(c, "Gmail không hợp lệ")
             else { Apps.putStr(c, "pin", sha(pin.text.toString())); if (askMail) Apps.putStr(c, "pin_mail", mail.text.toString().trim()); done() }
-        }.setNegativeButton("Huỷ", null).show()
+        }.setNegativeButton("Huỷ", null).setCancelable(false).show()
 }
 
 /** Quên PIN: gửi mã 6 số tới Gmail đã đăng ký, nhập đúng mã thì đặt lại PIN */
@@ -74,7 +74,7 @@ fun recoverPin(c: Context, done: () -> Unit) {
                     val valid = sha(et.text.toString()) == Apps.str(c, "rc_hash") && System.currentTimeMillis() < (Apps.str(c, "rc_exp")?.toLong() ?: 0L)
                     Apps.del(c, "rc_hash", "rc_exp")
                     if (valid) setupLock(c, false, done) else toast(c, "Mã sai hoặc đã hết hạn")
-                }.setNegativeButton("Huỷ", null).show()
+                }.setNegativeButton("Huỷ", null).setCancelable(false).show()
         }
     }
 }

@@ -417,6 +417,8 @@ class MainActivity : VActivity() {
     private lateinit var inputRow: LinearLayout
     private lateinit var inputBox: View
     private lateinit var bottomCol: LinearLayout
+    private lateinit var leftRow: LinearLayout
+    private lateinit var iconsRow: LinearLayout
 
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
@@ -430,6 +432,7 @@ class MainActivity : VActivity() {
             addView(iconBtn(R.drawable.ic_mic, "Trợ lý giọng nói") { voice() })
             addView(iconBtn(R.drawable.ic_apps, "Tất cả ứng dụng") { safeStart(this@MainActivity, Intent(this@MainActivity, AllAppsActivity::class.java)) })
         }
+        leftRow = left
         root.addView(left, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START).apply { setMargins(dp(40), dp(24), 0, 0) })
 
         // Phải trên cùng: Wi-Fi + cài đặt. Đứng yên một chỗ, không bị ô giờ/thời tiết ảnh hưởng
@@ -438,6 +441,7 @@ class MainActivity : VActivity() {
             addView(iconBtn(R.drawable.ic_wifi, "Wi-Fi") { if (!safeStart(this@MainActivity, Intent(Settings.ACTION_WIFI_SETTINGS))) openSystemSettings(this@MainActivity) })
             addView(iconBtn(R.drawable.ic_settings, "Cài đặt") { settingsMenu() })
         }
+        iconsRow = icons
         root.addView(icons, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.END).apply { setMargins(0, dp(24), dp(40), 0) })
 
         // Ô độc lập: giờ + ngày + âm lịch ở trên, thời tiết ở dưới. Phóng to/thu nhỏ bằng thanh gạt, không đụng tới thứ khác
@@ -587,6 +591,10 @@ class MainActivity : VActivity() {
             text = "Tìm xã / phường / thị trấn / huyện…"
             setOnClickListener { searchPlace { h -> pick = Triple(h.first, h.second, h.third); showPick() } }
         })
+        col.addView(Button(c).apply {
+            text = "Nhập thủ công (tên + toạ độ)…"
+            setOnClickListener { manualPlace { t -> pick = t; showPick() } }
+        })
         col.addView(picked)
         col.addView(TextView(c).apply { text = "Kích thước: gạt trái = nhỏ, gạt phải = lớn (tối đa vừa màn hình)"; setPadding(0, dp(20), 0, 0) })
         val bar = SeekBar(c).apply {
@@ -629,38 +637,104 @@ class MainActivity : VActivity() {
 
     private class Hit(val label: String, val name: String, val lat: Double, val lon: Double)
 
-    // Tra cứu mọi địa danh cả nước (tỉnh, huyện, xã, phường, thị trấn...) bằng OpenStreetMap, dự phòng Open-Meteo
-    private fun geocode(q: String): List<Hit> {
-        val e = URLEncoder.encode(q, "UTF-8")
+    // Bỏ dấu + chữ thường để gõ có dấu hay không dấu đều khớp ("Thanh Ba" = "thanh ba" = "THANH BÁ")
+    private fun norm(s: String): String {
+        val d = java.text.Normalizer.normalize(s.lowercase(Locale("vi")), java.text.Normalizer.Form.NFD)
+        return d.replace(Regex("\\p{M}+"), "").replace('đ', 'd').replace(Regex("[^a-z0-9]+"), " ").trim()
+    }
+
+    // Tra cứu mọi địa danh cả nước (tỉnh, huyện, xã, phường, thị trấn...): danh sách có sẵn (dùng được khi mất mạng),
+    // rồi OpenStreetMap, dự phòng Open-Meteo. Tự thử nhiều cách gõ (đủ câu, chỉ phần trước dấu phẩy, bỏ dấu)
+    private fun geocode(q0: String): List<Hit> {
+        val q = q0.trim().replace(Regex("\\s+"), " ")
+        val tokens = norm(q).split(" ").filter { it.isNotEmpty() }
+        if (tokens.isEmpty()) return emptyList()
         val out = ArrayList<Hit>()
-        try {
-            val arr = JSONArray(httpGet("https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&limit=25&countrycodes=vn&accept-language=vi&q=$e"))
-            for (i in 0 until arr.length()) {
-                val o = arr.getJSONObject(i)
-                val cat = o.optString("category")
-                if (cat != "boundary" && cat != "place") continue
-                val disp = o.optString("display_name").removeSuffix(", Việt Nam").replace(Regex(",\\s*\\d{5,6}$"), "")
-                val nm = o.optString("name").ifEmpty { disp.substringBefore(",") }
-                out.add(Hit(disp, nm, o.getString("lat").toDouble(), o.getString("lon").toDouble()))
-            }
-        } catch (ex: Exception) {}
-        if (out.isEmpty()) {
-            val arr = JSONObject(httpGet("https://geocoding-api.open-meteo.com/v1/search?count=20&language=vi&format=json&name=$e")).optJSONArray("results")
-            if (arr != null) for (i in 0 until arr.length()) {
-                val o = arr.getJSONObject(i)
-                if (o.optString("country_code") != "VN") continue
-                val label = listOf(o.optString("name"), o.optString("admin3"), o.optString("admin2"), o.optString("admin1")).filter { it.isNotEmpty() }.joinToString(", ")
-                out.add(Hit(label, o.optString("name"), o.getDouble("latitude"), o.getDouble("longitude")))
-            }
+        fun add(h: Hit) {
+            val n = norm(h.name)
+            if (out.none { Math.abs(it.lat - h.lat) < 0.003 && Math.abs(it.lon - h.lon) < 0.003 && norm(it.name) == n }) out.add(h)
         }
-        return out
+        fun matchAll(label: String): Boolean { val n = " " + norm(label) + " "; return tokens.all { n.contains(" " + it) } }
+
+        for (pl in VN_PLACES) if (matchAll(pl.first)) add(Hit(pl.first, pl.first, pl.second, pl.third))
+        VN_DISTRICTS.forEach { (prov, l) -> l.forEach { d -> if (matchAll(d.first + " " + prov)) add(Hit(d.first + ", " + prov, d.first, d.second, d.third)) } }
+
+        val first = q.substringBefore(",").trim()
+        val plain = norm(q)
+        val variants = LinkedHashSet<String>().apply { add(q); if (first.isNotEmpty()) add(first); add(plain); add(norm(first)) }.filter { it.isNotEmpty() }
+        var anyOk = false
+        var lastErr: Exception? = null
+
+        for (v in variants) {
+            if (out.size >= 8) break
+            try {
+                val e = URLEncoder.encode(v, "UTF-8")
+                val arr = JSONArray(httpGet("https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&dedupe=1&limit=30&countrycodes=vn&accept-language=vi&q=$e"))
+                anyOk = true
+                val raw = ArrayList<Hit>(); val pref = ArrayList<Hit>()
+                for (i in 0 until arr.length()) {
+                    val o = arr.getJSONObject(i)
+                    val cat = o.optString("category")
+                    val disp = o.optString("display_name").removeSuffix(", Việt Nam").replace(Regex(",\\s*\\d{5,6}$"), "")
+                    val nm = o.optString("name").ifEmpty { disp.substringBefore(",") }
+                    val h = Hit(disp, nm, o.getString("lat").toDouble(), o.getString("lon").toDouble())
+                    if (cat == "boundary" || cat == "place") pref.add(h) else if (cat != "highway" && cat != "shop" && cat != "amenity") raw.add(h)
+                }
+                (pref + raw).forEach { add(it) }
+                if (out.size < 8) Thread.sleep(1100)   // Nominatim chỉ cho tối đa 1 yêu cầu/giây
+            } catch (ex: Exception) { lastErr = ex }
+        }
+
+        if (out.isEmpty()) for (v in variants) {
+            try {
+                val e = URLEncoder.encode(v.substringBefore(","), "UTF-8")
+                val arr = JSONObject(httpGet("https://geocoding-api.open-meteo.com/v1/search?count=20&language=vi&format=json&name=$e")).optJSONArray("results")
+                anyOk = true
+                if (arr != null) for (i in 0 until arr.length()) {
+                    val o = arr.getJSONObject(i)
+                    if (o.optString("country_code") != "VN") continue
+                    val label = listOf(o.optString("name"), o.optString("admin3"), o.optString("admin2"), o.optString("admin1")).filter { it.isNotEmpty() }.joinToString(", ")
+                    add(Hit(label, o.optString("name"), o.getDouble("latitude"), o.getDouble("longitude")))
+                }
+                if (out.isNotEmpty()) break
+            } catch (ex: Exception) { lastErr = ex }
+        }
+
+        if (out.isEmpty() && !anyOk && lastErr != null) throw lastErr
+        // Kết quả khớp đủ các từ khoá đứng trước
+        return out.sortedBy { if (matchAll(it.label)) 0 else 1 }
+    }
+
+    // Nhập tay: tên hiển thị + vĩ độ + kinh độ (lấy từ Google Maps: bấm giữ vào điểm rồi chép cặp số). Có thể dán cả cặp "21.3227, 105.4019" vào ô Vĩ độ
+    private fun manualPlace(onPick: (Triple<String, Double, Double>) -> Unit) {
+        val c = this
+        val name = EditText(c).apply { hint = "Tên hiển thị (VD: Nhà tôi)"; setSingleLine(true) }
+        val lat = EditText(c).apply { hint = "Vĩ độ (VD: 21.3227)"; setSingleLine(true); inputType = android.text.InputType.TYPE_CLASS_TEXT }
+        val lon = EditText(c).apply { hint = "Kinh độ (VD: 105.4019)"; setSingleLine(true); inputType = android.text.InputType.TYPE_CLASS_TEXT }
+        val note = TextView(c).apply { textSize = 12f; text = "Mẹo: trên Google Maps bấm giữ vào điểm cần xem, chép cặp số hiện ra rồi dán cả vào ô Vĩ độ."; setPadding(0, dp(8), 0, 0) }
+        val col = LinearLayout(c).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(dp(24), dp(12), dp(24), 0)
+            addView(name); addView(lat); addView(lon); addView(note)
+        }
+        val dlg = AlertDialog.Builder(c).setTitle("Nhập thủ công").setView(ScrollView(c).apply { addView(col) })
+            .setPositiveButton("Dùng nơi này", null).setNegativeButton("Huỷ", null).create()
+        dlg.show()
+        dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            val nums = Regex("-?\\d+(?:[.,]\\d+)?").findAll(lat.text.toString() + " " + lon.text.toString())
+                .map { it.value.replace(',', '.').toDouble() }.toList()
+            if (nums.size < 2) { Toast.makeText(c, "Cần nhập đủ vĩ độ và kinh độ", Toast.LENGTH_SHORT).show(); return@setOnClickListener }
+            val la = nums[0]; val lo = nums[1]
+            if (la < -90 || la > 90 || lo < -180 || lo > 180) { Toast.makeText(c, "Toạ độ không hợp lệ (vĩ độ -90..90, kinh độ -180..180)", Toast.LENGTH_LONG).show(); return@setOnClickListener }
+            val nm = name.text.toString().trim().ifEmpty { "Nơi của tôi" }
+            onPick(Triple(nm, la, lo)); dlg.dismiss()
+        }
     }
 
     private fun searchPlace(onPick: (Triple<String, Double, Double>) -> Unit) {
         val c = this
         val hits = ArrayList<Hit>(); val labels = ArrayList<String>()
         val adapter = ArrayAdapter(c, android.R.layout.simple_list_item_1, labels)
-        val input = EditText(c).apply { hint = "VD: Thanh Ba, Phú Thọ"; setSingleLine(true); imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH }
+        val input = EditText(c).apply { hint = "VD: Thanh Ba, Phú Thọ (có dấu hay không dấu đều được)"; setSingleLine(true); imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH }
         val status = TextView(c).apply { textSize = 13f; text = "Nhập tên rồi bấm Tìm (có thể gõ kèm tỉnh để chính xác hơn)"; setPadding(0, dp(6), 0, dp(6)) }
         val list = ListView(c).apply { this.adapter = adapter }
         val go = {
@@ -747,21 +821,36 @@ class MainActivity : VActivity() {
         guard(this) { safeStart(this, Intent(this, SettingsActivity::class.java)) }
     }
 
-    // Phím TRÁI/PHẢI đi lần lượt qua TỪNG mục ở màn hình chính theo thứ tự:
-    // 1 Mic, 2 Tất cả ứng dụng, 3 Wi-Fi, 4 Cài đặt, 5 Ô giờ/thời tiết, 6 tiêu đề Yêu thích, 7.. các ứng dụng yêu thích, 8 tiêu đề Đầu vào (rồi các cổng vào)
-    // Hết cuối (PHẢI) thì quay về mục 1; ở mục 1 bấm TRÁI thì nhảy xuống mục cuối
+    // Thứ tự di chuyển cố định (không phụ thuộc cách Android tự đoán):
+    // Mic -> Tất cả ứng dụng -> Wi-Fi -> Cài đặt -> Giờ/ngày/thời tiết -> tiêu đề Yêu thích -> từng ứng dụng yêu thích
+    // -> tiêu đề Đầu vào -> từng cổng vào. Nếu đã đổi vị trí hàng Đầu vào lên trên thì hai hàng cuối đổi chỗ cho khớp màn hình
+    private fun focusOrder(): List<View> {
+        val l = ArrayList<View>()
+        for (i in 0 until leftRow.childCount) l.add(leftRow.getChildAt(i))
+        for (i in 0 until iconsRow.childCount) l.add(iconsRow.getChildAt(i))
+        l.add(cwBox)
+        val blocks = if (Apps.inputsAbove(this)) listOf(inputBox to inputRow, favBox to favRow) else listOf(favBox to favRow, inputBox to inputRow)
+        for ((b, row) in blocks) {
+            l.add((b as android.view.ViewGroup).getChildAt(0))
+            for (i in 0 until row.childCount) l.add(row.getChildAt(i))
+        }
+        return l.filter { it.isShown && it.isFocusable }
+    }
+
+    // Phím PHẢI: sang mục kế tiếp, hết mục cuối thì về Mic. Phím TRÁI: ngược lại, ở Mic bấm TRÁI thì nhảy xuống mục cuối
     override fun dispatchKeyEvent(e: KeyEvent): Boolean {
         val code = e.keyCode
-        if (e.action == KeyEvent.ACTION_DOWN && (code == KeyEvent.KEYCODE_DPAD_LEFT || code == KeyEvent.KEYCODE_DPAD_RIGHT) && currentFocus != null && currentFocus?.rootView === window.decorView) {
-            val cur = currentFocus!!
-            val order = ArrayList<View>()
-            window.decorView.addFocusables(order, View.FOCUS_FORWARD, View.FOCUSABLES_ALL)
-            val list = order.filter { it.isShown && it.isFocusable }
-            val i = list.indexOf(cur)
-            if (i >= 0 && list.size > 1) {
+        if (e.action == KeyEvent.ACTION_DOWN && (code == KeyEvent.KEYCODE_DPAD_LEFT || code == KeyEvent.KEYCODE_DPAD_RIGHT) && !isFinishing) {
+            val list = focusOrder()
+            if (list.isNotEmpty()) {
                 val n = list.size
-                list[if (code == KeyEvent.KEYCODE_DPAD_RIGHT) (i + 1) % n else (i - 1 + n) % n].requestFocus()
-                return true
+                val i = list.indexOf(currentFocus)
+                val next = when {
+                    i >= 0 -> if (code == KeyEvent.KEYCODE_DPAD_RIGHT) (i + 1) % n else (i - 1 + n) % n
+                    currentFocus == null -> 0
+                    else -> -1
+                }
+                if (next >= 0) { list[next].requestFocus(); return true }
             }
         }
         return super.dispatchKeyEvent(e)
