@@ -31,3 +31,6 @@ jobs:
           body: Tai file TVLauncher.apk ben duoi roi cai len TV.
           files: TVLauncher.apk
           make_latest: true
+          # lan 2
+  
+          
