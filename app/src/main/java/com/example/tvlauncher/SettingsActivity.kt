@@ -99,7 +99,7 @@ class SettingsActivity : VActivity() {
     private fun build() {
         list.removeAllViews()
         list.addView(TextView(this).apply { text = "Cài đặt Home TV"; textSize = 24f; setTextColor(0xFF4D6BFF.toInt()); setPadding(dp(24), 0, 0, dp(12)) })
-        item("Giới thiệu", "v1.2", false, null, null) { showAbout() }
+        item("Giới thiệu", "v1.3", false, null, null) { showAbout() }
         item("Hướng dẫn cho TV Xiaomi nội địa", null, false, null, null) { xiaomiHelp() }
         val dm = android.util.DisplayMetrics(); windowManager.defaultDisplay.getRealMetrics(dm)
         item("Độ phân giải màn hình", "${dm.widthPixels}x${dm.heightPixels}", false, null, null) { toast(this, "Đây là độ phân giải TV đang xuất ra. Nếu chữ quá to hoặc quá nhỏ, hãy chọn Kích cỡ TV bên dưới.") }
@@ -130,9 +130,10 @@ class SettingsActivity : VActivity() {
             Apps.setInputsAbove(this, !Apps.inputsAbove(this)); build() }
         toggle("Cho phép chọn tiện ích", "pick", true)
         item("Thiết lập lại tiện ích", null, false, null, null) {
-            listOf("@weather", "@clock", "@favs", "@inputs").forEach { Apps.setHidden(this, it, false); Apps.del(this, "size_$it") }
+            listOf("@weather", "@clock", "@favs", "@inputs").forEach { Apps.setHidden(this, it, false); Apps.del(this, "size_$it", "fs_$it") }
             Apps.setInputsAbove(this, false)
             Toast.makeText(this, "Đã thiết lập lại", Toast.LENGTH_SHORT).show(); build() }
+        item("Hiện lại ứng dụng đã ẩn", null, false, null, null) { Apps.showAllApps(this); Toast.makeText(this, "Đã hiện lại các ứng dụng đã ẩn", Toast.LENGTH_SHORT).show() }
         choice("Kích thước ứng dụng", "appsize", arrayOf("Nhỏ", "Vừa", "Lớn"), 1)
         item("Dịch vụ trợ năng", enabledServices().size.let { if (it == 0) "Tắt" else "Bật ($it)" }, false, null, null) { accessibilityDialog() }
         choice("Cỡ chữ", "fontsz", arrayOf("Vừa", "Lớn", "Rất lớn"), 0)
@@ -341,7 +342,7 @@ class SettingsActivity : VActivity() {
         fun t(txt: String, sz: Float, col: Int = Color.WHITE) = TextView(this).apply { text = txt; textSize = sz; setTextColor(col); setPadding(0, dp(4), 0, dp(4)) }
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; setPadding(dp(24), dp(16), dp(24), dp(16))
-            addView(t("TV Launcher - Phiên bản 1.2", 18f))
+            addView(t("TV Launcher - Phiên bản 1.3", 18f))
             addView(t("Liên hệ tác giả", 16f, 0xFF4D6BFF.toInt()))
             addView(t("Facebook: Lộc Hưng", 16f))
             addView(t("Zalo: 0349353193", 16f))

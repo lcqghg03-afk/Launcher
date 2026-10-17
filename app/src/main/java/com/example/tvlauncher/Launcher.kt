@@ -26,6 +26,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.drawable.StateListDrawable
 import android.view.KeyEvent
+import android.view.MotionEvent
 import java.util.Locale
 import org.json.JSONObject
 import java.net.URL
@@ -90,7 +91,7 @@ fun openSystemSettings(c: Context) {
 
 fun httpGet(u: String): String {
     val c = URL(u).openConnection() as java.net.HttpURLConnection
-    c.connectTimeout = 8000; c.readTimeout = 8000; c.setRequestProperty("User-Agent", "TVLauncher/1.2")
+    c.connectTimeout = 8000; c.readTimeout = 8000; c.setRequestProperty("User-Agent", "TVLauncher/1.3")
     try { return c.inputStream.bufferedReader().readText() } finally { c.disconnect() }
 }
 
@@ -179,9 +180,14 @@ object Apps {
     fun setInputsAbove(c: Context, v: Boolean) = sp(c).edit().putBoolean("inp_above", v).apply()
     // Kích thước: 0 = nhỏ, 1 = vừa, 2 = lớn
     fun size(c: Context, k: String) = sp(c).getInt("size_$k", 1)
-    fun setSize(c: Context, k: String, v: Int) = sp(c).edit().putInt("size_$k", v).apply()
+    fun setSize(c: Context, k: String, v: Int) = sp(c).edit().putInt("size_$k", v).remove("fs_$k").apply()
     private val S = floatArrayOf(0.75f, 1f, 1.4f)
-    fun scale(c: Context, k: String) = S[size(c, k)] * (if (k.startsWith("@")) 1f else S[int(c, "appsize", 1)])
+    // Kích thước liên tục (kéo trái/phải) của giờ và thời tiết, lưu dạng số thực
+    fun fscale(c: Context, k: String): Float? = if (sp(c).contains("fs_$k")) sp(c).getFloat("fs_$k", 1f) else null
+    fun setScale(c: Context, k: String, v: Float) = sp(c).edit().putFloat("fs_$k", v).apply()
+    fun scale(c: Context, k: String): Float = (fscale(c, k) ?: S[size(c, k)]) * (if (k.startsWith("@")) 1f else S[int(c, "appsize", 1)])
+    // Hiện lại các ứng dụng đã ẩn (giữ nguyên trạng thái ẩn của các khối giao diện bắt đầu bằng @)
+    fun showAllApps(c: Context) = sp(c).edit().putString("hid", csv(c, "hid").filter { it.startsWith("@") }.joinToString(",")).apply()
     fun int(c: Context, k: String, d: Int) = sp(c).getInt(k, d)
     fun putInt(c: Context, k: String, v: Int) = sp(c).edit().putInt(k, v).apply()
     fun bool(c: Context, k: String, d: Boolean) = sp(c).getBoolean(k, d)
@@ -201,11 +207,12 @@ object Apps {
 fun Context.dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
 /** Ô ứng dụng: ấn = mở, giữ lâu = menu */
-fun appView(c: Context, a: AppItem, onChange: () -> Unit): View = LinearLayout(c).apply {
+fun appView(c: Context, a: AppItem, inGrid: Boolean = false, onChange: () -> Unit): View = LinearLayout(c).apply {
     val sc = Apps.scale(c, a.pkg)
     orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER
     setPadding(c.dp(12), c.dp(12), c.dp(12), c.dp(12))
-    isFocusable = true; isClickable = true
+    // Trong lưới "Tất cả ứng dụng" ô không tự nhận phím/chạm, GridView lo việc bấm và giữ
+    isFocusable = !inGrid; isClickable = !inGrid
     addView(ImageView(c).apply { setImageDrawable(a.icon); layoutParams = LinearLayout.LayoutParams(c.dp((72 * sc).toInt()), c.dp((72 * sc).toInt()))
         clipToOutline = true
         outlineProvider = object : ViewOutlineProvider() { override fun getOutline(v: View, o: Outline) { o.setRoundRect(0, 0, v.width, v.height, c.dp(Apps.radius(c)).toFloat()) } } })
@@ -216,8 +223,25 @@ fun appView(c: Context, a: AppItem, onChange: () -> Unit): View = LinearLayout(c
         v.background = if (f) GradientDrawable().apply { cornerRadius = c.dp(Apps.radius(c) + 4).toFloat(); setColor(if (hc) 0x66FFFFFF else 0x33FFFFFF); if (hc) setStroke(c.dp(3), Color.WHITE) } else null
         if (f && Apps.bool(c, "tts", false)) Speaker.say(c, a.label)
     }
-    setOnClickListener { if (Apps.isLocked(c, a.pkg)) guard(c) { Apps.open(c, a.pkg) } else Apps.open(c, a.pkg) }
-    setOnLongClickListener { showMenu(c, a, onChange); true }
+    if (!inGrid) {
+        setOnClickListener { openApp(c, a) }
+        setOnLongClickListener { showMenu(c, a, onChange); true }
+    }
+}
+
+/** Mở ứng dụng, hỏi PIN nếu ứng dụng đang bị khoá */
+fun openApp(c: Context, a: AppItem) {
+    if (Apps.isLocked(c, a.pkg)) guard(c) { Apps.open(c, a.pkg) } else Apps.open(c, a.pkg)
+}
+
+fun openDetails(c: Context, pkg: String, hint: String?) {
+    if (!safeStart(c, Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$pkg")))) Toast.makeText(c, "TV không mở được màn hình thông tin ứng dụng", Toast.LENGTH_LONG).show()
+    else if (hint != null) Toast.makeText(c, hint, Toast.LENGTH_LONG).show()
+}
+
+fun openPerms(c: Context, pkg: String) {
+    val i = Intent("android.intent.action.MANAGE_APP_PERMISSIONS").putExtra("android.intent.extra.PACKAGE_NAME", pkg)
+    if (!safeStart(c, i)) openDetails(c, pkg, "Chọn mục Quyền để cấp hoặc thu hồi quyền")
 }
 
 fun sizeDialog(c: Context, key: String, title: String, onChange: () -> Unit) {
@@ -227,18 +251,25 @@ fun sizeDialog(c: Context, key: String, title: String, onChange: () -> Unit) {
 
 fun showMenu(c: Context, a: AppItem, onChange: () -> Unit) {
     val fav = a.pkg in Apps.favs(c)
-    val items = arrayOf(if (fav) "Bỏ khỏi màn hình chính" else "Thêm vào màn hình chính", "Đổi kích thước", "Ẩn ứng dụng", if (Apps.isLocked(c, a.pkg)) "Mở khoá ứng dụng" else "Khoá ứng dụng", "Xem thông tin ứng dụng", "Xoá ứng dụng")
-    AlertDialog.Builder(c).setTitle(a.label).setItems(items) { _, i ->
-        when (i) {
-            0 -> { val l = Apps.favs(c).toMutableList(); if (fav) l.remove(a.pkg) else l.add(a.pkg); Apps.setFavs(c, l); onChange() }
-            1 -> sizeDialog(c, a.pkg, a.label, onChange)
-            2 -> { Apps.setHidden(c, a.pkg, true); onChange() }
-            3 -> if (Apps.str(c, "pin") == null) Toast.makeText(c, "Hãy bật Khoá ứng dụng trong Cài đặt Home TV trước", Toast.LENGTH_LONG).show()
-                 else guard(c) { Apps.setLocked(c, a.pkg, !Apps.isLocked(c, a.pkg)); onChange() }
-            4 -> safeStart(c, Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${a.pkg}")))
-            5 -> guard(c) { if (!safeStart(c, Intent(Intent.ACTION_DELETE, Uri.parse("package:${a.pkg}")))) Toast.makeText(c, "TV không cho gỡ ứng dụng ở đây", Toast.LENGTH_LONG).show() }
-        }
-    }.show()
+    val labels = ArrayList<String>(); val acts = ArrayList<() -> Unit>()
+    fun row(l: String, f: () -> Unit) { labels.add(l); acts.add(f) }
+    row("Mở ứng dụng") { openApp(c, a) }
+    row(if (fav) "Bỏ khỏi màn hình chính" else "Thêm vào màn hình chính") {
+        val l = Apps.favs(c).toMutableList(); if (fav) l.remove(a.pkg) else l.add(a.pkg); Apps.setFavs(c, l); onChange()
+    }
+    row("Tuỳ chỉnh kích thước") { sizeDialog(c, a.pkg, a.label, onChange) }
+    row("Ẩn ứng dụng") { Apps.setHidden(c, a.pkg, true); onChange() }
+    row(if (Apps.isLocked(c, a.pkg)) "Mở khoá ứng dụng" else "Khoá ứng dụng") {
+        if (Apps.str(c, "pin") == null) Toast.makeText(c, "Hãy bật Khoá ứng dụng trong Cài đặt Home TV trước", Toast.LENGTH_LONG).show()
+        else guard(c) { Apps.setLocked(c, a.pkg, !Apps.isLocked(c, a.pkg)); onChange() }
+    }
+    row("Cấp quyền ứng dụng") { openPerms(c, a.pkg) }
+    row("Xoá dữ liệu ứng dụng") { guard(c) { openDetails(c, a.pkg, "Chọn Bộ nhớ rồi bấm Xoá dữ liệu") } }
+    row("Xem thông tin ứng dụng") { openDetails(c, a.pkg, null) }
+    row("Gỡ cài đặt (xoá) ứng dụng") {
+        guard(c) { if (!safeStart(c, Intent(Intent.ACTION_DELETE, Uri.parse("package:${a.pkg}")))) Toast.makeText(c, "TV không cho gỡ ứng dụng ở đây", Toast.LENGTH_LONG).show() }
+    }
+    AlertDialog.Builder(c).setTitle(a.label).setItems(labels.toTypedArray()) { _, i -> acts[i]() }.show()
 }
 
 /** Menu cho widget / giờ / hàng yêu thích / hàng đầu vào: đổi kích thước, chuyển lên/xuống, ẩn */
@@ -259,9 +290,10 @@ fun blockMenu(c: Context, key: String, title: String, onChange: () -> Unit) {
 }
 
 /** Áp kích thước + ẩn cho một khối. px,py = điểm neo phóng to (0..1) */
-fun applyBlock(c: Context, v: View, key: String, px: Float, py: Float) {
+fun applyBlock(c: Context, v: View, key: String, px: Float, py: Float, reflow: Boolean = false) {
     v.visibility = if (Apps.isHidden(c, key)) View.GONE else View.VISIBLE
-    val s = Apps.scale(c, key); v.scaleX = s; v.scaleY = s
+    // reflow = true: khối đổi cỡ chữ thật (không phóng hình) nên các khối bên dưới tự dịch chỗ
+    val s = if (reflow) 1f else Apps.scale(c, key); v.scaleX = s; v.scaleY = s
     v.post { v.pivotX = v.width * px; v.pivotY = v.height * py }
 }
 
@@ -326,6 +358,9 @@ class MainActivity : VActivity() {
         weather.isFocusable = true
         weather.setOnLongClickListener { blockMenu(this, "@weather", "Tiện ích thời tiết") { applyAll() }; true }
         rightCol.addView(weather, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(2) })
+        // Chọn giờ hoặc thời tiết rồi bấm phím TRÁI để thu nhỏ, PHẢI để phóng lớn (hoặc kéo trái/phải bằng chuột, cảm ứng)
+        attachResize(clockBox, "@clock", "Giờ và ngày")
+        attachResize(weather, "@weather", "Thời tiết")
 
         // Yêu thích
         val box = LinearLayout(this).apply {
@@ -350,6 +385,53 @@ class MainActivity : VActivity() {
         root.addView(bottomCol, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM).apply { setMargins(dp(40), 0, dp(40), dp(40)) })
         setContentView(root)
         left.getChildAt(1).requestFocus()
+    }
+
+    private var resizeToast: Toast? = null
+
+    private fun attachResize(v: View, key: String, name: String) {
+        val normal = v.background
+        v.setOnFocusChangeListener { _, f ->
+            v.background = if (f) GradientDrawable().apply { cornerRadius = dp(16).toFloat(); setColor(0x55FFFFFF); setStroke(dp(2), Color.WHITE) } else normal
+        }
+        fun change(ns: Float) {
+            val s = ns.coerceIn(0.5f, 2.5f)
+            Apps.setScale(this, key, s); applyTexts()
+            resizeToast?.cancel()
+            resizeToast = Toast.makeText(this, "$name: ${(s * 100).toInt()}%", Toast.LENGTH_SHORT).also { it.show() }
+        }
+        v.setOnKeyListener { _, code, e ->
+            if (e.action == KeyEvent.ACTION_DOWN && (code == KeyEvent.KEYCODE_DPAD_LEFT || code == KeyEvent.KEYCODE_DPAD_RIGHT)) {
+                change(Apps.scale(this, key) + (if (code == KeyEvent.KEYCODE_DPAD_RIGHT) 0.1f else -0.1f)); true
+            } else false
+        }
+        var downX = 0f; var start = 1f; var drag = false
+        v.setOnTouchListener { _, ev ->
+            when (ev.actionMasked) {
+                MotionEvent.ACTION_DOWN -> { downX = ev.rawX; start = Apps.scale(this, key); drag = false; false }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = ev.rawX - downX
+                    if (!drag && Math.abs(dx) > dp(12)) { drag = true; v.cancelLongPress() }
+                    if (drag) { change(start + dx / dp(500)); true } else false
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { val d = drag; drag = false; if (d) v.isPressed = false; d }
+                else -> false
+            }
+        }
+    }
+
+    // Cỡ chữ của giờ, ngày, lịch âm và thời tiết theo kích thước đã chọn (đổi cỡ chữ thật nên không đè lên nhau)
+    private fun applyTexts() {
+        val fs = Apps.fs(this)
+        val ws = Apps.scale(this, "@weather"); val cs = Apps.scale(this, "@clock")
+        weather.textSize = 15f * fs * ws
+        weather.setPadding(dp((14 * ws).toInt()), dp((6 * ws).toInt()), dp((14 * ws).toInt()), dp((6 * ws).toInt()))
+        (clockBox as LinearLayout).let {
+            (it.getChildAt(0) as TextView).textSize = 26f * fs * cs
+            val d = it.getChildAt(1) as LinearLayout
+            (d.getChildAt(0) as TextView).textSize = 11f * fs * cs
+            lunar.textSize = 11f * fs * cs
+        }
     }
 
     // Tiêu đề của một hàng: bấm OK (hoặc giữ) để đổi kích thước / chuyển lên-xuống / ẩn
@@ -448,14 +530,12 @@ class MainActivity : VActivity() {
         tint.setBackgroundColor(if (Apps.bool(this, "hc", false)) 0xAA000000.toInt() else intArrayOf(0x66000000, 0x88102A5A.toInt(), 0x884A1A6A.toInt(), 0x886A1A1A.toInt(), 0x881A4A2A.toInt())[Apps.int(this, "color", 0)])
         (bottomCol.layoutParams as FrameLayout.LayoutParams).bottomMargin = dp(intArrayOf(20, 40, 80)[Apps.int(this, "cat_h", 1)])
         bottomCol.requestLayout()
-        val fs = Apps.fs(this)
-        weather.textSize = 15f * fs
-        (clockBox as LinearLayout).let { (it.getChildAt(0) as TextView).textSize = 26f * fs; val d = it.getChildAt(1) as LinearLayout; (d.getChildAt(0) as TextView).textSize = 11f * fs; lunar.textSize = 11f * fs
-            lunar.visibility = if (Apps.bool(this, "lunar", true)) View.VISIBLE else View.GONE }
+        lunar.visibility = if (Apps.bool(this, "lunar", true)) View.VISIBLE else View.GONE
+        applyTexts()
         applyOrder()
         refreshFavs()
-        applyBlock(this, weather, "@weather", 1f, 0f)
-        applyBlock(this, clockBox, "@clock", 1f, 0f)
+        applyBlock(this, weather, "@weather", 1f, 0f, true)
+        applyBlock(this, clockBox, "@clock", 1f, 0f, true)
         applyBlock(this, favBox, "@favs", 0f, 1f)
         applyBlock(this, inputBox, "@inputs", 0f, 1f)
     }
@@ -554,18 +634,33 @@ class MainActivity : VActivity() {
 
 class AllAppsActivity : VActivity() {
     private lateinit var grid: GridView
+    private var apps: List<AppItem> = emptyList()
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
-        grid = GridView(this).apply { numColumns = 4 + Apps.int(this@AllAppsActivity, "cols", 2); setBackgroundColor(0xEE000000.toInt()); setPadding(dp(40), dp(40), dp(40), dp(40)) }
-        setContentView(grid); fill()
+        val me = this
+        grid = GridView(this).apply {
+            numColumns = 4 + Apps.int(me, "cols", 2); setBackgroundColor(0xEE000000.toInt()); setPadding(dp(40), dp(40), dp(40), dp(40))
+            val hc = Apps.bool(me, "hc", false)
+            // Ô đang chọn: nền trắng mờ (viền trắng khi bật tương phản cao), thay cho màu cam mặc định của TV
+            selector = GradientDrawable().apply { cornerRadius = dp(Apps.radius(me) + 4).toFloat(); setColor(if (hc) 0x66FFFFFF else 0x33FFFFFF); if (hc) setStroke(dp(3), Color.WHITE) }
+            // Bấm OK / chạm = mở ứng dụng, giữ lâu = menu tuỳ chỉnh
+            setOnItemClickListener { _, _, p, _ -> if (p in apps.indices) openApp(me, apps[p]) }
+            setOnItemLongClickListener { _, _, p, _ -> if (p in apps.indices) showMenu(me, apps[p]) { fill() }; true }
+            setOnItemSelectedListener(object : AdapterView.OnItemSelectedListener {
+                override fun onItemSelected(parent: AdapterView<*>?, v: View?, p: Int, id: Long) { if (p in apps.indices && Apps.bool(me, "tts", false)) Speaker.say(me, apps[p].label) }
+                override fun onNothingSelected(parent: AdapterView<*>?) {}
+            })
+        }
+        setContentView(grid)
     }
+    override fun onResume() { super.onResume(); fill() }
     private fun fill() {
-        val apps = Apps.load(this)
+        apps = Apps.load(this)
         grid.adapter = object : BaseAdapter() {
             override fun getCount() = apps.size
             override fun getItem(p: Int) = apps[p]
             override fun getItemId(p: Int) = p.toLong()
-            override fun getView(p: Int, v: View?, parent: android.view.ViewGroup) = appView(this@AllAppsActivity, apps[p]) { fill() }
+            override fun getView(p: Int, v: View?, parent: android.view.ViewGroup) = appView(this@AllAppsActivity, apps[p], true) { fill() }
         }
     }
 }
