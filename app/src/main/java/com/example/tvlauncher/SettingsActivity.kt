@@ -166,6 +166,7 @@ class SettingsActivity : VActivity() {
         item("Độ phân giải màn hình", "${dm.widthPixels}x${dm.heightPixels}", false, null, null) { toast(this, "Đây là độ phân giải TV đang xuất ra. Nếu chữ quá to hoặc quá nhỏ, hãy chọn Kích cỡ TV bên dưới.") }
         choice("Kích cỡ TV", "tvsize", TV_SIZES, 0, true)
         choice("Tinh chỉnh độ lớn giao diện", "tvfine", FINE_LABELS, 2, true)
+        item("Chỉnh sửa kênh", TvApps.shownApps(this).size.let { if (it == 0) "Chưa bật" else "Đang hiện $it" }, false, null, { Apps.del(this, "tv_show") }) { tvChannelsDialog() }
         item("Chuyển đầu vào (HDMI/AV)", null, false, null, null) { pickInput(this) }
         item("Cài đặt hệ thống", null, false, null, null) { openSystemSettings(this) }
         val vp = Apps.str(this, "voice_pkg")
@@ -197,7 +198,7 @@ class SettingsActivity : VActivity() {
         toggle("Cho phép chọn tiện ích", "pick", true)
         item("Thiết lập lại tiện ích", null, false, null, null) {
             listOf("@weather", "@clock", "@favs", "@inputs", "@tv").forEach { Apps.setHidden(this, it, false); Apps.del(this, "size_$it", "fs_$it") }
-            Apps.del(this, "cw_lock", "wx_place", "wx_lat", "wx_lon", "tv_ch")
+            Apps.del(this, "cw_lock", "wx_place", "wx_lat", "wx_lon", "tv_ch", "tv_show")
             Apps.setInputsAbove(this, false)
             Toast.makeText(this, "Đã thiết lập lại", Toast.LENGTH_SHORT).show(); build() }
         item("Hiện lại ứng dụng đã ẩn", null, false, null, null) { hiddenAppsDialog() }
@@ -239,6 +240,33 @@ class SettingsActivity : VActivity() {
 
     private fun toggle(title: String, key: String, def: Boolean) {
         item(title, null, false, Apps.bool(this, key, def), { Apps.del(this, key) }) { Apps.putBool(this, key, !Apps.bool(this, key, def)); build() }
+    }
+
+    // Chỉnh sửa kênh: liệt kê các ứng dụng có thể đưa kênh lên màn hình chính, mỗi ứng dụng có nút Hiện / Ẩn.
+    // Mặc định tất cả đều ẩn, nên hàng Truyền hình ở màn hình chính trống cho tới khi bạn bật
+    private fun tvChannelsDialog() {
+        val sup = TvApps.supported(this)
+        if (sup.isEmpty()) {
+            AlertDialog.Builder(this).setTitle("Chỉnh sửa kênh")
+                .setMessage("Chưa thấy ứng dụng nào hỗ trợ đưa kênh lên màn hình chính. Hãy cài ứng dụng xem TV có hỗ trợ tính năng này rồi quay lại mục này.")
+                .setPositiveButton("Đóng", null).show()
+            return
+        }
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(24), dp(8), dp(24), 0) }
+        sup.forEach { a ->
+            val btn = Button(this)
+            val refresh = { btn.text = if (TvApps.isShown(this, a.pkg)) "Đang hiện · bấm để ẩn" else "Đang ẩn · bấm để hiện" }
+            refresh()
+            btn.setOnClickListener { TvApps.setShown(this, a.pkg, !TvApps.isShown(this, a.pkg)); refresh() }
+            col.addView(LinearLayout(this).apply {
+                gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(6), 0, dp(6))
+                addView(ImageView(this@SettingsActivity).apply { setImageDrawable(a.icon) }, LinearLayout.LayoutParams(dp(40), dp(40)))
+                addView(TextView(this@SettingsActivity).apply { text = a.label; textSize = 18f; setPadding(dp(12), 0, dp(12), 0) }, LinearLayout.LayoutParams(0, -2, 1f))
+                addView(btn)
+            })
+        }
+        AlertDialog.Builder(this).setTitle("Chỉnh sửa kênh (${sup.size} ứng dụng)").setView(ScrollView(this).apply { addView(col) })
+            .setNegativeButton("Đóng", null).setOnDismissListener { build() }.show()
     }
 
     // Danh sách tất cả ứng dụng đã ẩn: tích chọn từng ứng dụng để bỏ ẩn, hoặc bỏ ẩn tất cả

@@ -22,6 +22,7 @@ import android.widget.*
 import android.os.Build
 import android.content.BroadcastReceiver
 import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.drawable.StateListDrawable
@@ -317,6 +318,35 @@ object Apps {
     }
 }
 
+/** Kênh truyền hình trên màn hình chính: chỉ các ứng dụng có khai báo quyền đưa kênh lên màn hình chính của Android TV
+ *  (WRITE_EPG_DATA) mới được liệt kê trong Cài đặt > Kênh truyền hình. Mặc định tất cả đều ẨN, bật ứng dụng nào thì
+ *  ứng dụng đó hiện thành một ô ở hàng Truyền hình. Danh sách đã bật lưu ở khoá "tv_show" */
+object TvApps {
+    private const val PERM = "com.android.providers.tv.permission.WRITE_EPG_DATA"
+
+    fun supported(c: Context): List<AppItem> {
+        val pm = c.packageManager
+        return Apps.loadAll(c).filter { a ->
+            a.pkg != c.packageName && try {
+                pm.getPackageInfo(a.pkg, PackageManager.GET_PERMISSIONS).requestedPermissions?.contains(PERM) == true
+            } catch (e: Exception) { false }
+        }
+    }
+
+    private fun ids(c: Context): List<String> = (Apps.str(c, "tv_show") ?: "").split(",").filter { it.isNotEmpty() }
+    fun isShown(c: Context, pkg: String) = pkg in ids(c)
+    fun setShown(c: Context, pkg: String, on: Boolean) {
+        val l = ids(c).toMutableList(); l.remove(pkg); if (on) l.add(pkg)
+        Apps.putStr(c, "tv_show", l.joinToString(","))
+    }
+
+    /** Các ứng dụng đang bật hiện trên màn hình chính (bỏ qua ứng dụng đã gỡ) */
+    fun shownApps(c: Context): List<AppItem> {
+        val all = Apps.loadAll(c).associateBy { it.pkg }
+        return ids(c).mapNotNull { all[it] }
+    }
+}
+
 fun Context.dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
 /** Ô ứng dụng: ấn = mở, giữ lâu = menu */
@@ -433,6 +463,8 @@ class MainActivity : VActivity() {
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
         scaleKey = (uiScale(this) * 1000).toInt()
+        // Bản cũ lưu sẵn VTV1–VTV5 (kênh ảo) ở khoá này: xoá đi, hàng Truyền hình giờ chỉ lấy từ Cài đặt > Kênh truyền hình
+        Apps.del(this, "tv_ch")
         val root = FrameLayout(this)
         bg = FrameLayout(this); tint = View(this)
         root.addView(bg, -1, -1); root.addView(tint, -1, -1)
@@ -500,11 +532,12 @@ class MainActivity : VActivity() {
             setOnLongClickListener { blockMenu(this@MainActivity, "@inputs", "Hàng đầu vào") { applyAll() }; true }
         }
         inputBox = ibox
-        // Truyền hình: hàng kênh (VTV1...) nằm trên hàng Yêu thích. Bấm = mở kênh, nhấn giữ = sửa / thêm / xoá
+        // Truyền hình: nằm trên hàng Yêu thích. Không còn kênh nào có sẵn; chỉ hiện ứng dụng đã bật trong Cài đặt > Kênh truyền hình
+        // (chưa bật ứng dụng nào thì cả hàng, kể cả tiêu đề, được ẩn). Đệm trên/dưới/hai bên đủ rộng để ô phóng to khi chọn không bị cắt
         val tbox = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             addView(rowTitle("Truyền hình", "@tv", "Hàng truyền hình") { tvRow }, LinearLayout.LayoutParams(-2, -2))
-            tvRow = LinearLayout(this@MainActivity).apply { setPadding(dp(4), dp(8), dp(4), dp(8)) }
+            tvRow = LinearLayout(this@MainActivity).apply { setPadding(dp(12), dp(8), dp(12), dp(16)) }
             addView(HorizontalScrollView(this@MainActivity).apply { isFocusable = false; isHorizontalScrollBarEnabled = false; addView(tvRow) })
             setOnLongClickListener { blockMenu(this@MainActivity, "@tv", "Hàng truyền hình") { applyAll() }; true }
         }
@@ -846,7 +879,7 @@ class MainActivity : VActivity() {
     }
 
     // Thứ tự di chuyển cố định (không phụ thuộc cách Android tự đoán):
-    // Mic -> Tất cả ứng dụng -> Wi-Fi -> Cài đặt -> Giờ/ngày/thời tiết -> từng kênh Truyền hình -> từng ứng dụng yêu thích
+    // Mic -> Tất cả ứng dụng -> Wi-Fi -> Cài đặt -> Giờ/ngày/thời tiết -> từng ô Truyền hình -> từng ứng dụng yêu thích
     // -> từng cổng vào. Các tiêu đề (Truyền hình, Yêu thích, Đầu vào) bị bỏ qua, chỉ dừng ở ô có thể bấm. Nếu đã đổi vị trí hàng Đầu vào lên trên thì hai hàng cuối đổi chỗ cho khớp màn hình
     private fun focusOrder(): List<View> {
         val l = ArrayList<View>()
@@ -968,6 +1001,8 @@ class MainActivity : VActivity() {
         refreshTv()
         applyBox()
         applyBlock(this, tvBox, "@tv", 0f, 1f)
+        // Chưa bật ứng dụng nào ở Cài đặt > Kênh truyền hình: ẩn cả hàng, kể cả chữ "Truyền hình"
+        if (tvRow.childCount == 0) tvBox.visibility = View.GONE
         applyBlock(this, favBox, "@favs", 0f, 1f)
         applyBlock(this, inputBox, "@inputs", 0f, 1f)
     }
@@ -1046,22 +1081,8 @@ class MainActivity : VActivity() {
     }
 
     // ===== Truyền hình =====
-    private class Ch(var n: String, var u: String, var p: String)
-
-    private fun defaultTv(): MutableList<Ch> = (1..5).map { Ch("VTV$it", "", "") }.toMutableList()
-
-    private fun loadTv(): MutableList<Ch> {
-        val raw = Apps.str(this, "tv_ch") ?: return defaultTv()
-        return try {
-            val a = JSONArray(raw)
-            (0 until a.length()).map { val o = a.getJSONObject(it); Ch(o.optString("n"), o.optString("u"), o.optString("p")) }.toMutableList()
-        } catch (e: Exception) { defaultTv() }
-    }
-
-    private fun saveTv(l: List<Ch>) {
-        val a = JSONArray(); l.forEach { a.put(JSONObject().put("n", it.n).put("u", it.u).put("p", it.p)) }
-        Apps.putStr(this, "tv_ch", a.toString())
-    }
+    // Không còn kênh nào có sẵn (đã bỏ VTV1–VTV5 và nút "Thêm kênh"). Hàng này chỉ hiện các ứng dụng
+    // được bật ở Cài đặt > Kênh truyền hình. Bấm = mở ứng dụng, nhấn giữ = đổi kích thước / ẩn hàng
 
     private fun tileBg(f: Boolean) = GradientDrawable().apply {
         cornerRadius = dp(12).toFloat()
@@ -1071,92 +1092,24 @@ class MainActivity : VActivity() {
 
     private fun refreshTv() {
         tvRow.removeAllViews()
-        val list = loadTv()
         val lp = { LinearLayout.LayoutParams(-2, -2).apply { rightMargin = dp(12) } }
-        list.forEachIndexed { i, ch ->
+        TvApps.shownApps(this).forEachIndexed { i, a ->
             tvRow.addView(TextView(this).apply {
-                text = ch.n; gravity = Gravity.CENTER; typeface = android.graphics.Typeface.DEFAULT_BOLD
+                text = a.label; gravity = Gravity.CENTER; typeface = android.graphics.Typeface.DEFAULT_BOLD
                 textSize = 22f * Apps.fs(this@MainActivity); setTextColor(TV_COLORS[i % TV_COLORS.size])
+                maxLines = 1
                 minWidth = dp(120); setPadding(dp(22), dp(14), dp(22), dp(14))
                 isFocusable = true; isClickable = true; background = tileBg(false)
-                setOnFocusChangeListener { v, f -> v.scaleX = if (f) 1.1f else 1f; v.scaleY = v.scaleX; v.background = tileBg(f)
-                    if (f && Apps.bool(this@MainActivity, "tts", false)) Speaker.say(this@MainActivity, ch.n) }
-                setOnClickListener { openCh(ch) }
-                setOnLongClickListener { chMenu(i); true }
-            }, lp())
-        }
-        tvRow.addView(TextView(this).apply {
-            text = "＋ Thêm kênh"; gravity = Gravity.CENTER; textSize = 16f * Apps.fs(this@MainActivity); setTextColor(Color.WHITE)
-            setPadding(dp(18), dp(14), dp(18), dp(14)); isFocusable = true; isClickable = true; background = chipBg(this@MainActivity)
-            setOnClickListener { editCh(-1) }
-        }, lp())
-    }
-
-    // Mở kênh: có ứng dụng + liên kết thì mở liên kết bằng ứng dụng đó; chỉ ứng dụng thì mở ứng dụng; chỉ liên kết thì để hệ thống chọn trình phát/trình duyệt
-    private fun openCh(ch: Ch) {
-        val u = ch.u.trim()
-        val pkgOk = ch.p.isNotEmpty() && (packageManager.getLaunchIntentForPackage(ch.p) != null || packageManager.getLeanbackLaunchIntentForPackage(ch.p) != null)
-        if (u.isEmpty()) {
-            if (pkgOk) { Apps.open(this, ch.p); return }
-            // Chưa đặt gì: tự tìm ứng dụng VTV Go đã cài trên TV và mở nó (chưa mở thẳng từng kênh được)
-            val all = Apps.loadAll(this)
-            val vtv = all.firstOrNull { it.label.replace(" ", "").contains("vtvgo", true) } ?: all.firstOrNull { it.label.contains("vtv", true) }
-            if (vtv != null) Apps.open(this, vtv.pkg)
-            else Toast.makeText(this, "Chưa thấy ứng dụng VTV Go. Hãy cài VTV Go, hoặc nhấn giữ ô kênh để chọn ứng dụng khác", Toast.LENGTH_LONG).show()
-            return
-        }
-        val uri = Uri.parse(if (u.contains("://")) u else "https://$u")
-        val low = u.lowercase()
-        fun mk(): Intent = Intent(Intent.ACTION_VIEW).apply {
-            if (low.contains(".m3u8")) setDataAndType(uri, "application/x-mpegURL")
-            else if (low.contains(".mp4") || low.startsWith("rtmp") || low.startsWith("rtsp")) setDataAndType(uri, "video/*")
-            else data = uri
-        }
-        if (pkgOk && safeStart(this, mk().setPackage(ch.p))) return
-        if (!safeStart(this, mk())) {
-            if (pkgOk) Apps.open(this, ch.p)
-            else Toast.makeText(this, "TV chưa có ứng dụng/trình duyệt mở được liên kết này. Nhấn giữ để chọn ứng dụng", Toast.LENGTH_LONG).show()
-        }
-    }
-
-    private fun chMenu(i: Int) {
-        val l = loadTv(); val ch = l.getOrNull(i) ?: return
-        val labels = arrayOf("Sửa tên / liên kết", "Mở bằng ứng dụng đã cài…", "Thêm kênh mới", "Xoá kênh này", "Khôi phục VTV1–VTV5 mặc định", "Kích thước / Ẩn hàng Truyền hình")
-        AlertDialog.Builder(this).setTitle(ch.n).setItems(labels) { _, w ->
-            when (w) {
-                0 -> editCh(i)
-                1 -> {
-                    val apps = Apps.loadAll(this)
-                    val names = (listOf("Không dùng ứng dụng (chỉ mở liên kết)") + apps.map { it.label }).toTypedArray()
-                    AlertDialog.Builder(this).setTitle("Mở " + ch.n + " bằng…").setItems(names) { _, k ->
-                        val cur = loadTv(); cur.getOrNull(i)?.p = if (k == 0) "" else apps[k - 1].pkg
-                        saveTv(cur); refreshTv()
-                    }.show()
+                setOnFocusChangeListener { v, f ->
+                    // Phóng to neo ở CẠNH TRÊN: ô chỉ nở xuống dưới và sang hai bên, không bao giờ trồi lên che chữ "Truyền hình"
+                    v.pivotX = v.width / 2f; v.pivotY = 0f
+                    v.scaleX = if (f && !Apps.rm(this@MainActivity)) 1.1f else 1f; v.scaleY = v.scaleX
+                    v.background = tileBg(f)
+                    if (f && Apps.bool(this@MainActivity, "tts", false)) Speaker.say(this@MainActivity, a.label)
                 }
-                2 -> editCh(-1)
-                3 -> { val cur = loadTv(); if (i < cur.size) cur.removeAt(i); saveTv(cur); applyAll(); tvRow.getChildAt(0)?.requestFocus() }
-                4 -> { Apps.del(this, "tv_ch"); applyAll() }
-                else -> blockMenu(this, "@tv", "Hàng truyền hình") { applyAll() }
-            }
-        }.show()
-    }
-
-    // i = -1: thêm kênh mới
-    private fun editCh(i: Int) {
-        val cur = loadTv(); val old = cur.getOrNull(i)
-        val name = EditText(this).apply { hint = "Tên kênh (VD: VTV1)"; setSingleLine(true); setText(old?.n ?: "") }
-        val link = EditText(this).apply { hint = "Liên kết xem kênh (trang web hoặc .m3u8)"; setSingleLine(true); setText(old?.u ?: "") }
-        val note = TextView(this).apply { textSize = 12f; setPadding(0, dp(8), 0, 0)
-            text = "Liên kết web cần TV có trình duyệt; liên kết .m3u8 cần ứng dụng phát video (VD: VLC). Có thể chọn ứng dụng riêng bằng cách nhấn giữ ô kênh." }
-        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(24), dp(12), dp(24), 0); addView(name); addView(link); addView(note) }
-        val dlg = AlertDialog.Builder(this).setTitle(if (old == null) "Thêm kênh" else "Sửa kênh").setView(ScrollView(this).apply { addView(col) })
-            .setPositiveButton("Lưu", null).setNegativeButton("Huỷ", null).create()
-        dlg.show()
-        dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-            val n = name.text.toString().trim()
-            if (n.isEmpty()) { Toast.makeText(this, "Hãy nhập tên kênh", Toast.LENGTH_SHORT).show(); return@setOnClickListener }
-            if (old != null) { old.n = n; old.u = link.text.toString().trim() } else cur.add(Ch(n, link.text.toString().trim(), ""))
-            saveTv(cur); dlg.dismiss(); applyAll()
+                setOnClickListener { openApp(this@MainActivity, a) }
+                setOnLongClickListener { blockMenu(this@MainActivity, "@tv", "Hàng truyền hình") { applyAll() }; true }
+            }, lp())
         }
     }
 
