@@ -183,6 +183,8 @@ class SettingsActivity : VActivity() {
         toggle("Hiển thị lịch âm", "lunar", true)
         item("Hiển thị tiện ích thời tiết", null, false, !Apps.isHidden(this, "@weather"), { Apps.setHidden(this, "@weather", false) }) {
             Apps.setHidden(this, "@weather", !Apps.isHidden(this, "@weather")); build() }
+        item("Hiển thị hàng Truyền hình", null, false, !Apps.isHidden(this, "@tv"), { Apps.setHidden(this, "@tv", false) }) {
+            Apps.setHidden(this, "@tv", !Apps.isHidden(this, "@tv")); build() }
         item("Hiển thị hàng Yêu thích", null, false, !Apps.isHidden(this, "@favs"), { Apps.setHidden(this, "@favs", false) }) {
             Apps.setHidden(this, "@favs", !Apps.isHidden(this, "@favs")); build() }
         item("Hiển thị hàng Đầu vào (HDMI, VGA...)", null, false, !Apps.isHidden(this, "@inputs"), { Apps.setHidden(this, "@inputs", false) }) {
@@ -192,8 +194,8 @@ class SettingsActivity : VActivity() {
             Apps.setInputsAbove(this, !Apps.inputsAbove(this)); build() }
         toggle("Cho phép chọn tiện ích", "pick", true)
         item("Thiết lập lại tiện ích", null, false, null, null) {
-            listOf("@weather", "@clock", "@favs", "@inputs").forEach { Apps.setHidden(this, it, false); Apps.del(this, "size_$it", "fs_$it") }
-            Apps.del(this, "cw_lock", "wx_place", "wx_lat", "wx_lon")
+            listOf("@weather", "@clock", "@favs", "@inputs", "@tv").forEach { Apps.setHidden(this, it, false); Apps.del(this, "size_$it", "fs_$it") }
+            Apps.del(this, "cw_lock", "wx_place", "wx_lat", "wx_lon", "tv_ch")
             Apps.setInputsAbove(this, false)
             Toast.makeText(this, "Đã thiết lập lại", Toast.LENGTH_SHORT).show(); build() }
         item("Hiện lại ứng dụng đã ẩn", null, false, null, null) { hiddenAppsDialog() }
@@ -449,7 +451,7 @@ class SettingsActivity : VActivity() {
         fun t(txt: String, sz: Float, col: Int = Color.WHITE) = TextView(this).apply { text = txt; textSize = sz; setTextColor(col); setPadding(0, dp(4), 0, dp(4)) }
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; setPadding(dp(24), dp(16), dp(24), dp(16))
-            addView(t("TV Launcher - Phiên bản 1.3", 18f))
+            addView(t("TV Launcher - Phiên bản 1.6", 18f))
             addView(t("Liên hệ tác giả", 16f, 0xFF4D6BFF.toInt()))
             addView(t("Facebook: Lộc Hưng", 16f))
             addView(t("Zalo: 0349353193", 16f))
