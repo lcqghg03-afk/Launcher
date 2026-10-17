@@ -561,10 +561,9 @@ class MainActivity : VActivity() {
         first.setPadding(0, 0, 0, gap); second.setPadding(0, 0, 0, 0)
     }
 
+    // Bấm bánh răng (hoặc phím Menu) mở thẳng cài đặt TV Launcher. Cài đặt hệ thống của TV nằm bên trong đó
     private fun settingsMenu() {
-        AlertDialog.Builder(this).setTitle("Cài đặt").setItems(arrayOf("Cài đặt Home TV", "Cài đặt hệ thống của TV")) { _, i ->
-            if (i == 0) guard(this) { safeStart(this, Intent(this, SettingsActivity::class.java)) } else guard(this) { openSystemSettings(this) }
-        }.show()
+        guard(this) { safeStart(this, Intent(this, SettingsActivity::class.java)) }
     }
 
     // Phím Menu (≡) trên điều khiển Xiaomi mở nhanh cài đặt; phím Back không thoát launcher
