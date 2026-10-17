@@ -33,4 +33,5 @@ jobs:
           files: TVLauncher.apk
           make_latest: true
           # lan 3
+          # lan 4
           
