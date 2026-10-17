@@ -29,6 +29,8 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import java.util.Locale
 import org.json.JSONObject
+import org.json.JSONArray
+import java.net.URLEncoder
 import java.net.URL
 import kotlin.concurrent.thread
 
@@ -51,6 +53,30 @@ val VN_PLACES = listOf(
     Triple("Điện Biên", 21.3860, 103.0230), Triple("Lai Châu", 22.3964, 103.4703),
     Triple("Sơn La", 21.3256, 103.9188), Triple("Lạng Sơn", 21.8537, 106.7615),
     Triple("Quảng Ninh", 20.9517, 107.0807), Triple("Cao Bằng", 22.6657, 106.2570)
+)
+
+/** Quận/huyện/thị xã/thành phố theo từng tỉnh (toạ độ xấp xỉ). Phú Thọ gộp cả Vĩnh Phúc và Hòa Bình cũ.
+ *  Xã/phường/thị trấn thì dùng nút "Tìm" (tra cứu qua mạng, cả nước) */
+val VN_DISTRICTS: Map<String, List<Triple<String, Double, Double>>> = mapOf(
+    "Phú Thọ" to listOf(
+        Triple("TP Việt Trì", 21.3227, 105.4019), Triple("TX Phú Thọ", 21.4007, 105.2273),
+        Triple("Đoan Hùng", 21.6090, 105.1450), Triple("Hạ Hòa", 21.5890, 104.9700),
+        Triple("Thanh Ba", 21.4585, 105.1750), Triple("Phù Ninh", 21.4440, 105.3190),
+        Triple("Yên Lập", 21.3750, 105.0340), Triple("Cẩm Khê", 21.3956, 105.1050),
+        Triple("Tam Nông", 21.2970, 105.2480), Triple("Lâm Thao", 21.3150, 105.3050),
+        Triple("Thanh Sơn", 21.1600, 105.1730), Triple("Thanh Thủy", 21.0720, 105.2760),
+        Triple("Tân Sơn", 21.1880, 104.8800),
+        Triple("TP Vĩnh Yên", 21.3089, 105.6049), Triple("TX Phúc Yên", 21.2315, 105.7000),
+        Triple("Lập Thạch", 21.4108, 105.4658), Triple("Tam Dương", 21.3680, 105.5700),
+        Triple("Tam Đảo", 21.4590, 105.6050), Triple("Bình Xuyên", 21.2970, 105.6620),
+        Triple("Yên Lạc", 21.2160, 105.5850), Triple("Vĩnh Tường", 21.2400, 105.4930),
+        Triple("Sông Lô", 21.4700, 105.4000),
+        Triple("TP Hòa Bình", 20.8133, 105.3383), Triple("Đà Bắc", 20.9200, 105.0000),
+        Triple("Mai Châu", 20.6600, 105.0000), Triple("Lương Sơn", 20.8700, 105.5100),
+        Triple("Kim Bôi", 20.6700, 105.5400), Triple("Lạc Sơn", 20.4600, 105.4500),
+        Triple("Tân Lạc", 20.6100, 105.2900), Triple("Lạc Thủy", 20.4800, 105.7100),
+        Triple("Yên Thủy", 20.4000, 105.6200), Triple("Cao Phong", 20.7000, 105.3000)
+    )
 )
 
 /** Ép giao diện tiếng Việt, kể cả khi TV Xiaomi nội địa đang để tiếng Trung */
@@ -163,6 +189,12 @@ fun focusBg(c: Context): StateListDrawable = StateListDrawable().apply {
 fun chipBg(c: Context): StateListDrawable = StateListDrawable().apply {
     addState(intArrayOf(android.R.attr.state_focused), GradientDrawable().apply { cornerRadius = c.dp(16).toFloat(); setColor(0x66FFFFFF); setStroke(c.dp(2), Color.WHITE) })
     addState(intArrayOf(), GradientDrawable().apply { cornerRadius = c.dp(16).toFloat(); setColor(0x44000000); setStroke(c.dp(1), 0x88FFFFFF.toInt()) })
+}
+
+/** Nền ô giờ + thời tiết: hoàn toàn trong suốt, chỉ hiện viền sáng khi đang được chọn bằng điều khiển */
+fun cwBg(c: Context): StateListDrawable = StateListDrawable().apply {
+    addState(intArrayOf(android.R.attr.state_focused), GradientDrawable().apply { cornerRadius = c.dp(16).toFloat(); setColor(0x22FFFFFF); setStroke(c.dp(2), Color.WHITE) })
+    addState(intArrayOf(), GradientDrawable().apply { cornerRadius = c.dp(16).toFloat(); setColor(0) })
 }
 
 fun wmo(code: Int) = when (code) {
@@ -425,13 +457,14 @@ class MainActivity : VActivity() {
         }
         cwBox = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; isFocusable = true; isClickable = true
-            setPadding(dp(16), dp(10), dp(16), dp(12)); background = chipBg(this@MainActivity)
+            setPadding(dp(16), dp(10), dp(16), dp(12)); background = cwBg(this@MainActivity)
             addView(timeRow); addView(weather)
+            shadowAll(this)
             setOnClickListener { boxSettings() }
             setOnLongClickListener { boxMenu(); true }
         }
         root.addView(cwBox, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.END).apply { setMargins(0, dp(84), dp(40), 0) })
-        // Chọn ô rồi bấm phím TRÁI để thu nhỏ, PHẢI để phóng lớn (hoặc kéo trái/phải bằng chuột, cảm ứng)
+        // Đổi cỡ ô: bấm OK vào ô rồi dùng thanh gạt, hoặc kéo trái/phải bằng chuột/cảm ứng (phím TRÁI/PHẢI dành để chuyển mục)
         attachBoxResize()
 
         // Yêu thích
@@ -469,11 +502,6 @@ class MainActivity : VActivity() {
             resizeToast?.cancel()
             resizeToast = Toast.makeText(this, "Giờ và thời tiết: ${(s * 100).toInt()}%", Toast.LENGTH_SHORT).also { it.show() }
         }
-        v.setOnKeyListener { _, code, e ->
-            if (!Apps.bool(this, "cw_lock", false) && e.action == KeyEvent.ACTION_DOWN && (code == KeyEvent.KEYCODE_DPAD_LEFT || code == KeyEvent.KEYCODE_DPAD_RIGHT)) {
-                change(Apps.scale(this, "@clock") + (if (code == KeyEvent.KEYCODE_DPAD_RIGHT) 0.1f else -0.1f)); true
-            } else false
-        }
         var downX = 0f; var start = 1f; var drag = false
         v.setOnTouchListener { _, ev ->
             if (Apps.bool(this, "cw_lock", false)) return@setOnTouchListener false
@@ -510,6 +538,12 @@ class MainActivity : VActivity() {
         cwBox.post { cwBox.pivotX = cwBox.width.toFloat(); cwBox.pivotY = 0f }
     }
 
+    // Đổ bóng chữ để vẫn đọc rõ khi nền trong suốt
+    private fun shadowAll(v: View) {
+        if (v is TextView) v.setShadowLayer(6f, 0f, 2f, 0xDD000000.toInt())
+        if (v is android.view.ViewGroup) for (i in 0 until v.childCount) shadowAll(v.getChildAt(i))
+    }
+
     // Bấm vào ô: chọn tỉnh/thành, thanh gạt kích thước, khoá. Chỉ lưu khi bấm "Lưu"
     private fun boxSettings() {
         val c = this
@@ -521,8 +555,39 @@ class MainActivity : VActivity() {
         val names = listOf("Tự động (theo mạng)") + VN_PLACES.map { it.first }
         val sp = Spinner(c)
         sp.adapter = ArrayAdapter(c, android.R.layout.simple_spinner_dropdown_item, names)
-        sp.setSelection(names.indexOf(Apps.str(c, "wx_place")).coerceAtLeast(0))
         col.addView(sp)
+        val sp2 = Spinner(c)
+        col.addView(sp2)
+        val picked = TextView(c).apply { textSize = 13f; setPadding(0, dp(4), 0, 0) }
+        var pick: Triple<String, Double, Double>? = null
+        val showPick = { picked.text = pick?.let { "Đã chọn: ${it.first}" } ?: "" }
+        val fillDist = { p: String? ->
+            val l = listOf("Toàn tỉnh/thành") + ((p?.let { VN_DISTRICTS[it] } ?: emptyList()).map { it.first })
+            sp2.adapter = ArrayAdapter(c, android.R.layout.simple_spinner_dropdown_item, l)
+            sp2.visibility = if (l.size > 1) View.VISIBLE else View.GONE
+        }
+        val savedName = Apps.str(c, "wx_place")
+        val savedLat = Apps.str(c, "wx_lat")?.toDoubleOrNull(); val savedLon = Apps.str(c, "wx_lon")?.toDoubleOrNull()
+        val savedProv = VN_DISTRICTS.entries.firstOrNull { e -> e.value.any { it.first == savedName } }
+        var lastProv = names.indexOf(savedProv?.key ?: savedName).coerceAtLeast(0)
+        sp.setSelection(lastProv)
+        fillDist(names.getOrNull(lastProv)?.takeIf { lastProv > 0 })
+        if (savedProv != null) sp2.setSelection(1 + savedProv.value.indexOfFirst { it.first == savedName })
+        else if (savedName != null && lastProv == 0 && savedLat != null && savedLon != null) pick = Triple(savedName, savedLat, savedLon)
+        else if (savedName != null && savedLat != null && savedLon != null && names.indexOf(savedName) < 0) pick = Triple(savedName, savedLat, savedLon)
+        showPick()
+        sp.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(p: AdapterView<*>?, v: View?, i: Int, id: Long) {
+                if (i == lastProv) return
+                lastProv = i; fillDist(names.getOrNull(i)?.takeIf { i > 0 }); pick = null; showPick()
+            }
+            override fun onNothingSelected(p: AdapterView<*>?) {}
+        }
+        col.addView(Button(c).apply {
+            text = "Tìm xã / phường / thị trấn / huyện…"
+            setOnClickListener { searchPlace { h -> pick = Triple(h.first, h.second, h.third); showPick() } }
+        })
+        col.addView(picked)
         col.addView(TextView(c).apply { text = "Kích thước: gạt trái = nhỏ, gạt phải = lớn (tối đa vừa màn hình)"; setPadding(0, dp(20), 0, 0) })
         val bar = SeekBar(c).apply {
             max = 100
@@ -541,10 +606,17 @@ class MainActivity : VActivity() {
         lockCb.setOnCheckedChangeListener { _, on -> bar.isEnabled = !on }
         col.addView(lockCb)
         val revert = { Apps.setScale(c, "@clock", oldScale); applyBox() }
-        AlertDialog.Builder(c).setTitle("Giờ và thời tiết").setView(col)
+        AlertDialog.Builder(c).setTitle("Giờ và thời tiết").setView(ScrollView(c).apply { addView(col) })
             .setPositiveButton("Lưu") { _, _ ->
-                val i = sp.selectedItemPosition
-                if (i == 0) Apps.del(c, "wx_place") else Apps.putStr(c, "wx_place", names[i])
+                val i = sp.selectedItemPosition; val di = sp2.selectedItemPosition
+                val pk = pick
+                if (pk != null) {
+                    Apps.putStr(c, "wx_place", pk.first); Apps.putStr(c, "wx_lat", pk.second.toString()); Apps.putStr(c, "wx_lon", pk.third.toString())
+                } else if (i > 0 && sp2.visibility == View.VISIBLE && di > 0) {
+                    val d = VN_DISTRICTS[names[i]]!![di - 1]
+                    Apps.putStr(c, "wx_place", d.first); Apps.putStr(c, "wx_lat", d.second.toString()); Apps.putStr(c, "wx_lon", d.third.toString())
+                } else if (i == 0) Apps.del(c, "wx_place", "wx_lat", "wx_lon")
+                else { Apps.del(c, "wx_lat", "wx_lon"); Apps.putStr(c, "wx_place", names[i]) }
                 Apps.putBool(c, "cw_lock", lockCb.isChecked)
                 weather.text = "Đang tải thời tiết…"
                 loadWeather()
@@ -553,6 +625,71 @@ class MainActivity : VActivity() {
             .setNegativeButton("Huỷ") { _, _ -> revert() }
             .setOnCancelListener { revert() }
             .show()
+    }
+
+    private class Hit(val label: String, val name: String, val lat: Double, val lon: Double)
+
+    // Tra cứu mọi địa danh cả nước (tỉnh, huyện, xã, phường, thị trấn...) bằng OpenStreetMap, dự phòng Open-Meteo
+    private fun geocode(q: String): List<Hit> {
+        val e = URLEncoder.encode(q, "UTF-8")
+        val out = ArrayList<Hit>()
+        try {
+            val arr = JSONArray(httpGet("https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&limit=25&countrycodes=vn&accept-language=vi&q=$e"))
+            for (i in 0 until arr.length()) {
+                val o = arr.getJSONObject(i)
+                val cat = o.optString("category")
+                if (cat != "boundary" && cat != "place") continue
+                val disp = o.optString("display_name").removeSuffix(", Việt Nam").replace(Regex(",\\s*\\d{5,6}$"), "")
+                val nm = o.optString("name").ifEmpty { disp.substringBefore(",") }
+                out.add(Hit(disp, nm, o.getString("lat").toDouble(), o.getString("lon").toDouble()))
+            }
+        } catch (ex: Exception) {}
+        if (out.isEmpty()) {
+            val arr = JSONObject(httpGet("https://geocoding-api.open-meteo.com/v1/search?count=20&language=vi&format=json&name=$e")).optJSONArray("results")
+            if (arr != null) for (i in 0 until arr.length()) {
+                val o = arr.getJSONObject(i)
+                if (o.optString("country_code") != "VN") continue
+                val label = listOf(o.optString("name"), o.optString("admin3"), o.optString("admin2"), o.optString("admin1")).filter { it.isNotEmpty() }.joinToString(", ")
+                out.add(Hit(label, o.optString("name"), o.getDouble("latitude"), o.getDouble("longitude")))
+            }
+        }
+        return out
+    }
+
+    private fun searchPlace(onPick: (Triple<String, Double, Double>) -> Unit) {
+        val c = this
+        val hits = ArrayList<Hit>(); val labels = ArrayList<String>()
+        val adapter = ArrayAdapter(c, android.R.layout.simple_list_item_1, labels)
+        val input = EditText(c).apply { hint = "VD: Thanh Ba, Phú Thọ"; setSingleLine(true); imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH }
+        val status = TextView(c).apply { textSize = 13f; text = "Nhập tên rồi bấm Tìm (có thể gõ kèm tỉnh để chính xác hơn)"; setPadding(0, dp(6), 0, dp(6)) }
+        val list = ListView(c).apply { this.adapter = adapter }
+        val go = {
+            val q = input.text.toString().trim()
+            if (q.isNotEmpty()) {
+                status.text = "Đang tìm…"
+                thread {
+                    val r = try { geocode(q) } catch (ex: Exception) { null }
+                    runOnUiThread {
+                        hits.clear(); labels.clear()
+                        if (r == null) status.text = "Không kết nối được mạng"
+                        else { hits.addAll(r); r.forEach { labels.add(it.label) }; status.text = if (r.isEmpty()) "Không tìm thấy" else "Chọn một nơi bên dưới" }
+                        adapter.notifyDataSetChanged()
+                    }
+                }
+            }
+        }
+        val bar = LinearLayout(c).apply {
+            addView(input, LinearLayout.LayoutParams(0, -2, 1f))
+            addView(Button(c).apply { text = "Tìm"; setOnClickListener { go() } })
+        }
+        val col = LinearLayout(c).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(dp(24), dp(12), dp(24), 0)
+            addView(bar); addView(status); addView(list, LinearLayout.LayoutParams(-1, dp(260)))
+        }
+        input.setOnEditorActionListener { _, _, _ -> go(); true }
+        val dlg = AlertDialog.Builder(c).setTitle("Tìm nơi hiển thị thời tiết").setView(col).setNegativeButton("Đóng", null).create()
+        list.setOnItemClickListener { _, _, i, _ -> hits.getOrNull(i)?.let { onPick(Triple(it.name, it.lat, it.lon)); dlg.dismiss() } }
+        dlg.show()
     }
 
     private fun boxMenu() {
@@ -610,24 +747,21 @@ class MainActivity : VActivity() {
         guard(this) { safeStart(this, Intent(this, SettingsActivity::class.java)) }
     }
 
-    // Phím TRÁI/PHẢI đi lần lượt qua mọi mục ở màn hình chính theo thứ tự (trên xuống dưới, trái sang phải),
-    // hết cuối thì quay về đầu, giống màn hình Tất cả ứng dụng. Ô giờ/thời tiết dùng TRÁI/PHẢI để đổi cỡ
-    // nên chỉ nằm trong vòng khi đã bật "Khoá kích thước"; vào ô đó bằng phím XUỐNG từ Wi-Fi/Cài đặt
+    // Phím TRÁI/PHẢI đi lần lượt qua TỪNG mục ở màn hình chính theo thứ tự:
+    // 1 Mic, 2 Tất cả ứng dụng, 3 Wi-Fi, 4 Cài đặt, 5 Ô giờ/thời tiết, 6 tiêu đề Yêu thích, 7.. các ứng dụng yêu thích, 8 tiêu đề Đầu vào (rồi các cổng vào)
+    // Hết cuối (PHẢI) thì quay về mục 1; ở mục 1 bấm TRÁI thì nhảy xuống mục cuối
     override fun dispatchKeyEvent(e: KeyEvent): Boolean {
         val code = e.keyCode
-        if (e.action == KeyEvent.ACTION_DOWN && (code == KeyEvent.KEYCODE_DPAD_LEFT || code == KeyEvent.KEYCODE_DPAD_RIGHT)) {
-            val cur = currentFocus
-            val resizing = !Apps.bool(this, "cw_lock", false)
-            if (cur != null && !(cur === cwBox && resizing)) {
-                val order = ArrayList<View>()
-                window.decorView.addFocusables(order, View.FOCUS_FORWARD, View.FOCUSABLES_ALL)
-                if (resizing) order.remove(cwBox)
-                val i = order.indexOf(cur)
-                if (i >= 0 && order.size > 1) {
-                    val n = order.size
-                    order[if (code == KeyEvent.KEYCODE_DPAD_RIGHT) (i + 1) % n else (i - 1 + n) % n].requestFocus()
-                    return true
-                }
+        if (e.action == KeyEvent.ACTION_DOWN && (code == KeyEvent.KEYCODE_DPAD_LEFT || code == KeyEvent.KEYCODE_DPAD_RIGHT) && currentFocus != null && currentFocus?.rootView === window.decorView) {
+            val cur = currentFocus!!
+            val order = ArrayList<View>()
+            window.decorView.addFocusables(order, View.FOCUS_FORWARD, View.FOCUSABLES_ALL)
+            val list = order.filter { it.isShown && it.isFocusable }
+            val i = list.indexOf(cur)
+            if (i >= 0 && list.size > 1) {
+                val n = list.size
+                list[if (code == KeyEvent.KEYCODE_DPAD_RIGHT) (i + 1) % n else (i - 1 + n) % n].requestFocus()
+                return true
             }
         }
         return super.dispatchKeyEvent(e)
@@ -797,6 +931,7 @@ class MainActivity : VActivity() {
     // Nơi ở: ưu tiên tỉnh/thành người dùng đã chọn thủ công, nếu không thì dò theo IP (không cần GPS).
     // Thử lần lượt nhiều dịch vụ vì TV Xiaomi nội địa có thể chặn/lỗi một số trang
     private fun locate(): Triple<String, Double, Double> {
+        Apps.str(this, "wx_lat")?.toDoubleOrNull()?.let { la -> Apps.str(this, "wx_lon")?.toDoubleOrNull()?.let { lo -> return Triple(Apps.str(this, "wx_place") ?: "?", la, lo) } }
         Apps.str(this, "wx_place")?.let { n -> VN_PLACES.firstOrNull { it.first == n }?.let { return it } }
         val now = System.currentTimeMillis()
         val old = Apps.str(this, "loc")?.split("|")?.takeIf { it.size == 3 }

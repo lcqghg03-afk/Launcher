@@ -193,7 +193,7 @@ class SettingsActivity : VActivity() {
         toggle("Cho phép chọn tiện ích", "pick", true)
         item("Thiết lập lại tiện ích", null, false, null, null) {
             listOf("@weather", "@clock", "@favs", "@inputs").forEach { Apps.setHidden(this, it, false); Apps.del(this, "size_$it", "fs_$it") }
-            Apps.del(this, "cw_lock", "wx_place")
+            Apps.del(this, "cw_lock", "wx_place", "wx_lat", "wx_lon")
             Apps.setInputsAbove(this, false)
             Toast.makeText(this, "Đã thiết lập lại", Toast.LENGTH_SHORT).show(); build() }
         item("Hiện lại ứng dụng đã ẩn", null, false, null, null) { hiddenAppsDialog() }
@@ -203,7 +203,6 @@ class SettingsActivity : VActivity() {
         toggle("Giảm chuyển động (nên bật cho TV yếu)", "rm", isXiaomi())
         toggle("Đọc tên ứng dụng (TTS)", "tts", false)
         item("Cài app không rõ nguồn gốc", null, false, null, null) { guard(this) { unknownDialog() } }
-        item("Kho ứng dụng (DL Store, v.v.)", null, false, null, null) { guard(this) { storesDialog() } }
         item("Quyền ứng dụng", null, false, null, null) { permissionDialog() }
         item("Khoá ứng dụng", if (Apps.str(this, "pin") == null) "Tắt" else "Đang bật", true, null, null) { lockDialog() }
         item("Khôi phục cài đặt TV Launcher", null, true, null, null) { guard(this) { confirmReset() } }
@@ -422,9 +421,6 @@ class SettingsActivity : VActivity() {
         b.show()
     }
 
-    private fun isStore(a: AppItem) = a.pkg == "com.android.vending" ||
-        listOf("store", "market", "aptoide", "apk", "cửa hàng", "chợ").any { a.label.contains(it, true) }
-
     private fun openSettings(i: Intent) {
         try { startActivity(i) } catch (e: Exception) {
             try { startActivity(Intent(Settings.ACTION_SECURITY_SETTINGS)) } catch (e2: Exception) { toast(this, "TV không mở được màn hình này") } }
@@ -445,26 +441,6 @@ class SettingsActivity : VActivity() {
                     0 -> unknownSources(packageName)
                     1 -> pickApp("Cho phép cài từ…", Apps.loadAll(this)) { unknownSources(it.pkg) }
                     2 -> openSettings(Intent(Settings.ACTION_SECURITY_SETTINGS))
-                }
-            }.show()
-    }
-
-    private fun storesDialog() {
-        val all = Apps.loadAll(this)
-        val stores = all.filter { isStore(it) }
-        val names = (stores.map { it.label } + "Chọn app khác…").toTypedArray()
-        AlertDialog.Builder(this).setTitle(if (stores.isEmpty()) "Chưa thấy kho ứng dụng nào" else "Kho ứng dụng").setItems(names) { _, i ->
-            if (i < stores.size) storeMenu(stores[i]) else pickApp("Chọn kho ứng dụng", all) { storeMenu(it) }
-        }.show()
-    }
-
-    private fun storeMenu(a: AppItem) {
-        AlertDialog.Builder(this).setTitle(a.label)
-            .setItems(arrayOf("Mở ứng dụng", "Cho phép cài app không rõ nguồn từ app này", "Thông tin ứng dụng")) { _, i ->
-                when (i) {
-                    0 -> Apps.open(this, a.pkg)
-                    1 -> unknownSources(a.pkg)
-                    2 -> openSettings(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${a.pkg}")))
                 }
             }.show()
     }
