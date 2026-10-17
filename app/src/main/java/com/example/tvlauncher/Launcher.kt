@@ -413,18 +413,19 @@ class MainActivity : VActivity() {
     private fun attachBoxResize() {
         val v: View = cwBox
         fun change(ns: Float) {
-            val s = ns.coerceIn(0.5f, 2.5f)
+            val s = ns.coerceIn(0.5f, maxScale())
             Apps.setScale(this, "@clock", s); applyBox()
             resizeToast?.cancel()
             resizeToast = Toast.makeText(this, "Giờ và thời tiết: ${(s * 100).toInt()}%", Toast.LENGTH_SHORT).also { it.show() }
         }
         v.setOnKeyListener { _, code, e ->
-            if (e.action == KeyEvent.ACTION_DOWN && (code == KeyEvent.KEYCODE_DPAD_LEFT || code == KeyEvent.KEYCODE_DPAD_RIGHT)) {
+            if (!Apps.bool(this, "cw_lock", false) && e.action == KeyEvent.ACTION_DOWN && (code == KeyEvent.KEYCODE_DPAD_LEFT || code == KeyEvent.KEYCODE_DPAD_RIGHT)) {
                 change(Apps.scale(this, "@clock") + (if (code == KeyEvent.KEYCODE_DPAD_RIGHT) 0.1f else -0.1f)); true
             } else false
         }
         var downX = 0f; var start = 1f; var drag = false
         v.setOnTouchListener { _, ev ->
+            if (Apps.bool(this, "cw_lock", false)) return@setOnTouchListener false
             when (ev.actionMasked) {
                 MotionEvent.ACTION_DOWN -> { downX = ev.rawX; start = Apps.scale(this, "@clock"); drag = false; false }
                 MotionEvent.ACTION_MOVE -> {
@@ -438,20 +439,32 @@ class MainActivity : VActivity() {
         }
     }
 
+    // Cỡ lớn nhất mà ô còn nằm trọn trong màn hình (không bị tràn mất chữ)
+    private fun maxScale(): Float {
+        val root = cwBox.parent as? View ?: return 2.5f
+        if (root.width == 0 || cwBox.width == 0) return 2.5f
+        val byW = (root.width - dp(80)).toFloat() / cwBox.width
+        val byH = (root.height - dp(84) - dp(200)).toFloat() / cwBox.height.coerceAtLeast(1)
+        return minOf(2.5f, byW, byH).coerceAtLeast(1f)
+    }
+
     // Phóng to/thu nhỏ cả ô giờ + thời tiết quanh góc phải-trên. Dùng scale hình nên KHÔNG đẩy Wi-Fi, cài đặt hay khối khác
     private fun applyBox() {
         val hideClock = Apps.isHidden(this, "@clock"); val hideWeather = Apps.isHidden(this, "@weather")
         timeRow.visibility = if (hideClock) View.GONE else View.VISIBLE
         weather.visibility = if (hideWeather) View.GONE else View.VISIBLE
         cwBox.visibility = if (hideClock && hideWeather) View.GONE else View.VISIBLE
-        val s = Apps.scale(this, "@clock"); cwBox.scaleX = s; cwBox.scaleY = s
+        val s = Apps.scale(this, "@clock").coerceAtMost(maxScale()); cwBox.scaleX = s; cwBox.scaleY = s
         cwBox.pivotX = cwBox.width.toFloat(); cwBox.pivotY = 0f
         cwBox.post { cwBox.pivotX = cwBox.width.toFloat(); cwBox.pivotY = 0f }
     }
 
-    // Bấm vào ô: chọn tỉnh/thành cho thời tiết + thanh gạt kích thước
+    // Bấm vào ô: chọn tỉnh/thành, thanh gạt kích thước, khoá. Chỉ lưu khi bấm "Lưu"
     private fun boxSettings() {
         val c = this
+        val oldScale = Apps.scale(c, "@clock")
+        val oldLock = Apps.bool(c, "cw_lock", false)
+        val mx = maxScale()
         val col = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(24), dp(16), dp(24), 0) }
         col.addView(TextView(c).apply { text = "Nơi hiển thị thời tiết" })
         val names = listOf("Tự động (theo mạng)") + VN_PLACES.map { it.first }
@@ -459,32 +472,47 @@ class MainActivity : VActivity() {
         sp.adapter = ArrayAdapter(c, android.R.layout.simple_spinner_dropdown_item, names)
         sp.setSelection(names.indexOf(Apps.str(c, "wx_place")).coerceAtLeast(0))
         col.addView(sp)
-        col.addView(TextView(c).apply { text = "Kích thước: gạt trái = nhỏ, gạt phải = lớn"; setPadding(0, dp(20), 0, 0) })
+        col.addView(TextView(c).apply { text = "Kích thước: gạt trái = nhỏ, gạt phải = lớn (tối đa vừa màn hình)"; setPadding(0, dp(20), 0, 0) })
         val bar = SeekBar(c).apply {
             max = 100
-            progress = (((Apps.scale(c, "@clock") - 0.5f) / 2f) * 100).toInt().coerceIn(0, 100)
+            progress = (((oldScale.coerceAtMost(mx) - 0.5f) / (mx - 0.5f)) * 100).toInt().coerceIn(0, 100)
+            isEnabled = !oldLock
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(sb: SeekBar, p: Int, fromUser: Boolean) {
-                    if (fromUser) { Apps.setScale(c, "@clock", 0.5f + 2f * p / 100f); applyBox() }
+                    if (fromUser) { Apps.setScale(c, "@clock", 0.5f + (mx - 0.5f) * p / 100f); applyBox() }
                 }
                 override fun onStartTrackingTouch(sb: SeekBar) {}
                 override fun onStopTrackingTouch(sb: SeekBar) {}
             })
         }
         col.addView(bar)
+        val lockCb = CheckBox(c).apply { text = "Khoá kích thước (tránh đổi nhầm)"; isChecked = oldLock; setPadding(0, dp(12), 0, 0) }
+        lockCb.setOnCheckedChangeListener { _, on -> bar.isEnabled = !on }
+        col.addView(lockCb)
+        val revert = { Apps.setScale(c, "@clock", oldScale); applyBox() }
         AlertDialog.Builder(c).setTitle("Giờ và thời tiết").setView(col)
             .setPositiveButton("Lưu") { _, _ ->
                 val i = sp.selectedItemPosition
                 if (i == 0) Apps.del(c, "wx_place") else Apps.putStr(c, "wx_place", names[i])
+                Apps.putBool(c, "cw_lock", lockCb.isChecked)
                 weather.text = "Đang tải thời tiết…"
                 loadWeather()
-            }.setNegativeButton("Đóng", null).show()
+                Toast.makeText(c, "Đã lưu", Toast.LENGTH_SHORT).show()
+            }
+            .setNegativeButton("Huỷ") { _, _ -> revert() }
+            .setOnCancelListener { revert() }
+            .show()
     }
 
     private fun boxMenu() {
+        val locked = Apps.bool(this, "cw_lock", false)
         AlertDialog.Builder(this).setTitle("Giờ và thời tiết")
-            .setItems(arrayOf("Chọn nơi ở và kích thước", "Ẩn mục này")) { _, i ->
-                if (i == 0) boxSettings() else { Apps.setHidden(this, "@clock", true); Apps.setHidden(this, "@weather", true); applyAll() }
+            .setItems(arrayOf("Chọn nơi ở và kích thước", if (locked) "Mở khoá kích thước" else "Khoá kích thước", "Ẩn mục này")) { _, i ->
+                when (i) {
+                    0 -> boxSettings()
+                    1 -> { Apps.putBool(this, "cw_lock", !locked); Toast.makeText(this, if (locked) "Đã mở khoá" else "Đã khoá", Toast.LENGTH_SHORT).show() }
+                    else -> { Apps.setHidden(this, "@clock", true); Apps.setHidden(this, "@weather", true); applyAll() }
+                }
             }.show()
     }
 
