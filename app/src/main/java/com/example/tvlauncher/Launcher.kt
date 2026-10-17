@@ -633,7 +633,7 @@ class MainActivity : VActivity() {
 
     private fun applyAll() {
         applyBackground()
-        tint.setBackgroundColor(if (Apps.bool(this, "hc", false)) 0xAA000000.toInt() else intArrayOf(0x66000000, 0x88102A5A.toInt(), 0x884A1A6A.toInt(), 0x886A1A1A.toInt(), 0x881A4A2A.toInt())[Apps.int(this, "color", 0)])
+        tint.setBackgroundColor(if (Apps.bool(this, "hc", false)) 0xAA000000.toInt() else intArrayOf(0x00000000, 0x88102A5A.toInt(), 0x884A1A6A.toInt(), 0x886A1A1A.toInt(), 0x881A4A2A.toInt())[Apps.int(this, "color", 0)])
         (bottomCol.layoutParams as FrameLayout.LayoutParams).bottomMargin = dp(intArrayOf(20, 40, 80)[Apps.int(this, "cat_h", 1)])
         bottomCol.requestLayout()
         lunar.visibility = if (Apps.bool(this, "lunar", true)) View.VISIBLE else View.GONE
