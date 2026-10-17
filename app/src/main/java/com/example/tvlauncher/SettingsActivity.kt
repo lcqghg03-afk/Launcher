@@ -87,16 +87,50 @@ class BootReceiver : BroadcastReceiver() {
 
 class SettingsActivity : VActivity() {
     private lateinit var list: LinearLayout
+    private lateinit var scroll: ScrollView
     private var pendingVideo = false
 
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
         list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(120), dp(20), dp(120), dp(40)) }
-        setContentView(ScrollView(this).apply { setBackgroundColor(0xFF101018.toInt()); addView(list) })
+        scroll = ScrollView(this).apply { setBackgroundColor(0xFF101018.toInt()); addView(list) }
+        setContentView(scroll)
         build()
+        // Sau khi màn hình được tạo lại (đổi kích cỡ TV...), đưa con trỏ về đúng dòng đang chọn thay vì về đầu danh sách
+        val idx = b?.getInt("focus_idx", -1) ?: -1
+        if (idx >= 0) afterLayout { focusRow(idx) }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putInt("focus_idx", focusedRow())
+    }
+
+    // Số thứ tự dòng đang được chọn trong danh sách (-1 nếu chưa chọn dòng nào)
+    private fun focusedRow(): Int = (0 until list.childCount).firstOrNull { list.getChildAt(it).hasFocus() } ?: -1
+
+    // Chọn lại một dòng và cuộn sao cho dòng đó nằm khoảng 1/3 từ trên xuống
+    private fun focusRow(idx: Int) {
+        val row = list.getChildAt(idx) ?: return
+        scroll.scrollTo(0, (row.top - scroll.height / 3).coerceAtLeast(0))
+        row.requestFocus()
+    }
+
+    // Chạy sau khi giao diện đã đo xong và trước khi vẽ, nên không bị chớp
+    private fun afterLayout(block: () -> Unit) {
+        list.viewTreeObserver.addOnPreDrawListener(object : android.view.ViewTreeObserver.OnPreDrawListener {
+            override fun onPreDraw(): Boolean {
+                if (list.viewTreeObserver.isAlive) list.viewTreeObserver.removeOnPreDrawListener(this)
+                block()
+                return true
+            }
+        })
     }
 
     private fun build() {
+        // Nhớ vị trí cuộn và dòng đang chọn để dựng lại danh sách mà không bị nhảy về đầu
+        val keepY = scroll.scrollY
+        val keepIdx = focusedRow()
         list.removeAllViews()
         list.addView(TextView(this).apply { text = "TV Launcher"; textSize = 24f; setTextColor(0xFF4D6BFF.toInt()); setPadding(dp(24), 0, 0, dp(12)) })
         item("Giới thiệu", "v1.3", false, null, null) { showAbout() }
@@ -138,7 +172,6 @@ class SettingsActivity : VActivity() {
         choice("Kích thước ứng dụng", "appsize", arrayOf("Nhỏ", "Vừa", "Lớn"), 1)
         item("Dịch vụ trợ năng", enabledServices().size.let { if (it == 0) "Tắt" else "Bật ($it)" }, false, null, null) { accessibilityDialog() }
         choice("Cỡ chữ", "fontsz", arrayOf("Vừa", "Lớn", "Rất lớn"), 0)
-        toggle("Tương phản cao", "hc", false)
         toggle("Giảm chuyển động (nên bật cho TV yếu)", "rm", isXiaomi())
         toggle("Đọc tên ứng dụng (TTS)", "tts", false)
         item("Cài app không rõ nguồn gốc", null, false, null, null) { guard(this) { unknownDialog() } }
@@ -147,6 +180,11 @@ class SettingsActivity : VActivity() {
         item("Khoá ứng dụng", if (Apps.str(this, "pin") == null) "Tắt" else "Đang bật", true, null, null) { lockDialog() }
         item("Khôi phục cài đặt TV Launcher", null, true, null, null) { guard(this) { confirmReset() } }
         list.addView(TextView(this).apply { text = "TV Launcher By Lộc Hưng"; textSize = 14f; setTextColor(Color.WHITE); gravity = Gravity.CENTER; setPadding(0, dp(24), 0, 0) })
+        // Trả lại đúng vị trí cuộn và dòng đang chọn như trước khi dựng lại
+        if (keepY > 0 || keepIdx >= 0) afterLayout {
+            scroll.scrollTo(0, keepY)
+            if (keepIdx >= 0) list.getChildAt(keepIdx)?.requestFocus()
+        }
     }
 
     private fun item(title: String, value: String?, red: Boolean, checked: Boolean?, reset: (() -> Unit)?, click: () -> Unit) {
@@ -358,23 +396,14 @@ class SettingsActivity : VActivity() {
     /** Hỏi xác nhận trước khi khôi phục toàn bộ cài đặt */
     private fun confirmReset() {
         AlertDialog.Builder(this).setTitle("Khôi phục cài đặt TV Launcher")
-            .setMessage("Toàn bộ cài đặt (giao diện, ảnh nền, tiện ích, ứng dụng ẩn...) sẽ về mặc định. Mã PIN khoá ứng dụng được giữ nguyên.")
+            .setMessage("Toàn bộ cài đặt (giao diện, ảnh nền, tiện ích, mục Yêu thích, ứng dụng đã ẩn...) sẽ về mặc định. Mã PIN và các ứng dụng đã khoá được giữ nguyên.")
             .setPositiveButton("Khôi phục") { _, _ -> resetAll() }
             .setNegativeButton("Huỷ", null).show()
     }
 
     /** Xoá toàn bộ cài đặt về mặc định (giữ lại PIN và Gmail khôi phục) */
     private fun resetAll() {
-        Apps.del(this,
-            "tvsize", "tvfine", "voice_pkg", "cat_h", "radius", "boot", "cols",
-            "bg_uri", "bg_type", "res", "color", "tz", "lunar", "pick",
-            "appsize", "fontsz", "hc", "rm", "tts", "cw_lock", "wx_place")
-        listOf("@weather", "@clock", "@favs", "@inputs").forEach {
-            Apps.setHidden(this, it, false)
-            Apps.del(this, "size_$it", "fs_$it")
-        }
-        Apps.setInputsAbove(this, false)
-        Apps.showAllApps(this)
+        Apps.resetAll(this)
         toast(this, "Đã khôi phục cài đặt mặc định")
         recreate()
     }

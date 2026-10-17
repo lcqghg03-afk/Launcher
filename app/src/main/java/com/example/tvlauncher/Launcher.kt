@@ -54,14 +54,41 @@ val VN_PLACES = listOf(
 )
 
 /** Ép giao diện tiếng Việt, kể cả khi TV Xiaomi nội địa đang để tiếng Trung */
-// Kích cỡ TV: hệ số phóng to/thu nhỏ toàn bộ giao diện. 55 inch là mốc chuẩn (1.0)
-val TV_SIZES = arrayOf("Tự động (theo TV)", "32 inch", "43 inch", "50 inch", "55 inch", "65 inch", "75 inch", "85 inch", "98 inch")
-val TV_FACTORS = floatArrayOf(1f, 0.82f, 0.92f, 0.97f, 1f, 1.1f, 1.2f, 1.3f, 1.45f)
-val FINE_LABELS = arrayOf("80%", "90%", "100%", "110%", "120%", "130%")
-val FINE_FACTORS = floatArrayOf(0.8f, 0.9f, 1f, 1.1f, 1.2f, 1.3f)
+// Kích cỡ màn hình: hệ số phóng to/thu nhỏ toàn bộ giao diện. 55 inch là mốc chuẩn (1.0)
+// Xếp theo thứ tự tăng dần: điện thoại/tablet, laptop/màn hình PC, rồi tới TV. Hai mảng dưới phải cùng số phần tử
+val TV_SIZES = arrayOf(
+    "Tự động (theo TV)",
+    "6.5 inch (điện thoại)", "8 inch (tablet nhỏ)", "10 inch (tablet)", "15.6 inch (laptop)",
+    "21.5 inch (màn hình PC)", "24 inch (PC / TV nhỏ)", "27 inch (màn hình PC)",
+    "32 inch", "40 inch", "43 inch", "50 inch", "55 inch", "60 inch", "65 inch", "70 inch",
+    "75 inch", "77 inch", "85 inch", "98 inch", "100 inch", "110 inch"
+)
+val TV_FACTORS = floatArrayOf(
+    1f,
+    0.50f, 0.55f, 0.60f, 0.64f,
+    0.68f, 0.72f, 0.77f,
+    0.82f, 0.88f, 0.92f, 0.97f, 1f, 1.05f, 1.1f, 1.15f,
+    1.2f, 1.23f, 1.3f, 1.45f, 1.48f, 1.6f
+)
+val FINE_LABELS = arrayOf("80%", "90%", "100%", "110%", "120%", "130%", "140%", "150%", "160%", "170%", "180%", "190%", "200%")
+val FINE_FACTORS = floatArrayOf(0.8f, 0.9f, 1f, 1.1f, 1.2f, 1.3f, 1.4f, 1.5f, 1.6f, 1.7f, 1.8f, 1.9f, 2f)
+
+// Bản cũ lưu số thứ tự theo danh sách cũ dưới đây. Danh sách mới có thêm nhiều cỡ nên phải đổi số cũ sang số mới (chỉ chạy một lần)
+private val OLD_TV_SIZES = arrayOf("Tự động (theo TV)", "32 inch", "43 inch", "50 inch", "55 inch", "65 inch", "75 inch", "85 inch", "98 inch")
+
+private fun migrateTvSize(sp: android.content.SharedPreferences) {
+    if (sp.getInt("tvsize_ver", 1) >= 2) return
+    val e = sp.edit()
+    if (sp.contains("tvsize")) {
+        val label = OLD_TV_SIZES.getOrNull(sp.getInt("tvsize", 0))
+        e.putInt("tvsize", TV_SIZES.indexOf(label).coerceAtLeast(0))
+    }
+    e.putInt("tvsize_ver", 2).apply()
+}
 
 fun uiScale(c: Context): Float {
     val sp = c.getSharedPreferences("cfg", 0)
+    migrateTvSize(sp)
     return TV_FACTORS[sp.getInt("tvsize", 0).coerceIn(0, TV_FACTORS.size - 1)] * FINE_FACTORS[sp.getInt("tvfine", 2).coerceIn(0, FINE_FACTORS.size - 1)]
 }
 
@@ -216,6 +243,14 @@ object Apps {
     fun str(c: Context, k: String): String? = sp(c).getString(k, null)
     fun putStr(c: Context, k: String, v: String) = sp(c).edit().putString(k, v).apply()
     fun del(c: Context, vararg k: String) { val e = sp(c).edit(); k.forEach { e.remove(it) }; e.apply() }
+    /** Khôi phục TV Launcher về mặc định: xoá mọi cài đặt đã lưu (kể cả yêu thích, ứng dụng ẩn, ảnh nền, vị trí thời tiết...).
+     *  Chỉ giữ lại mã PIN, Gmail khôi phục và danh sách ứng dụng đã khoá để không vô tình mở khoá ứng dụng */
+    fun resetAll(c: Context) {
+        val keep = setOf("pin", "pin_mail", "locked", "tvsize_ver")
+        val e = sp(c).edit()
+        sp(c).all.keys.filter { it !in keep }.forEach { e.remove(it) }
+        e.apply()
+    }
     fun radius(c: Context) = intArrayOf(0, 12, 32)[int(c, "radius", 1)]
     fun tz(c: Context): String? = arrayOf<String?>(null, "Asia/Ho_Chi_Minh", "UTC", "Asia/Tokyo", "America/New_York", "Asia/Shanghai")[int(c, "tz", 1)]
     fun open(c: Context, pkg: String) {
@@ -251,11 +286,10 @@ fun appView(c: Context, a: AppItem, inGrid: Boolean = false, onChange: () -> Uni
     addView(ImageView(c).apply { setImageDrawable(a.icon); layoutParams = LinearLayout.LayoutParams(c.dp((72 * sc).toInt()), c.dp((72 * sc).toInt()))
         clipToOutline = true
         outlineProvider = object : ViewOutlineProvider() { override fun getOutline(v: View, o: Outline) { o.setRoundRect(0, 0, v.width, v.height, c.dp(Apps.radius(c)).toFloat()) } } })
-    addView(TextView(c).apply { text = a.label; setTextColor(Color.WHITE); textSize = 13f * sc * Apps.fs(c); if (Apps.bool(c, "hc", false)) typeface = android.graphics.Typeface.DEFAULT_BOLD; maxLines = 1; gravity = Gravity.CENTER })
+    addView(TextView(c).apply { text = a.label; setTextColor(Color.WHITE); textSize = 13f * sc * Apps.fs(c); maxLines = 1; gravity = Gravity.CENTER })
     setOnFocusChangeListener { v, f ->
         v.scaleX = if (f && !Apps.rm(c)) 1.12f else 1f; v.scaleY = v.scaleX
-        val hc = Apps.bool(c, "hc", false)
-        v.background = if (f) GradientDrawable().apply { cornerRadius = c.dp(Apps.radius(c) + 4).toFloat(); setColor(if (hc) 0x66FFFFFF else 0x33FFFFFF); if (hc) setStroke(c.dp(3), Color.WHITE) } else null
+        v.background = if (f) GradientDrawable().apply { cornerRadius = c.dp(Apps.radius(c) + 4).toFloat(); setColor(0x33FFFFFF) } else null
         if (f && Apps.bool(c, "tts", false)) Speaker.say(c, a.label)
     }
     if (!inGrid) {
@@ -632,7 +666,7 @@ class MainActivity : VActivity() {
 
     private fun applyAll() {
         applyBackground()
-        tint.setBackgroundColor(if (Apps.bool(this, "hc", false)) 0xAA000000.toInt() else intArrayOf(0x00000000, 0x88102A5A.toInt(), 0x884A1A6A.toInt(), 0x886A1A1A.toInt(), 0x881A4A2A.toInt())[Apps.int(this, "color", 0)])
+        tint.setBackgroundColor(intArrayOf(0x00000000, 0x88102A5A.toInt(), 0x884A1A6A.toInt(), 0x886A1A1A.toInt(), 0x881A4A2A.toInt())[Apps.int(this, "color", 0)])
         (bottomCol.layoutParams as FrameLayout.LayoutParams).bottomMargin = dp(intArrayOf(20, 40, 80)[Apps.int(this, "cat_h", 1)])
         bottomCol.requestLayout()
         lunar.visibility = if (Apps.bool(this, "lunar", true)) View.VISIBLE else View.GONE
@@ -746,9 +780,8 @@ class AllAppsActivity : VActivity() {
         val me = this
         grid = GridView(this).apply {
             numColumns = 4 + Apps.int(me, "cols", 2); setBackgroundColor(0xEE000000.toInt()); setPadding(dp(40), dp(40), dp(40), dp(40))
-            val hc = Apps.bool(me, "hc", false)
-            // Ô đang chọn: nền trắng mờ (viền trắng khi bật tương phản cao), thay cho màu cam mặc định của TV
-            selector = GradientDrawable().apply { cornerRadius = dp(Apps.radius(me) + 4).toFloat(); setColor(if (hc) 0x66FFFFFF else 0x33FFFFFF); if (hc) setStroke(dp(3), Color.WHITE) }
+            // Ô đang chọn: nền trắng mờ, thay cho màu cam mặc định của TV
+            selector = GradientDrawable().apply { cornerRadius = dp(Apps.radius(me) + 4).toFloat(); setColor(0x33FFFFFF) }
             // Bấm OK / chạm = mở ứng dụng, giữ lâu = menu tuỳ chỉnh
             setOnItemClickListener { _, _, p, _ -> if (p in apps.indices) openApp(me, apps[p]) }
             setOnItemLongClickListener { _, _, p, _ -> if (p in apps.indices) showMenu(me, apps[p]) { fill() }; true }
