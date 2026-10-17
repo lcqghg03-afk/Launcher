@@ -249,7 +249,7 @@ object Apps {
     /** Khôi phục TV Launcher về mặc định: xoá mọi cài đặt đã lưu (kể cả yêu thích, ứng dụng ẩn, ảnh nền, vị trí thời tiết...).
      *  Chỉ giữ lại mã PIN, Gmail khôi phục và danh sách ứng dụng đã khoá để không vô tình mở khoá ứng dụng */
     fun resetAll(c: Context) {
-        val keep = setOf("pin", "pin_mail", "locked", "tvsize_ver")
+        val keep = setOf("pin", "pin_mail", "locked", "tvsize_ver", "act_dev")
         val e = sp(c).edit()
         sp(c).all.keys.filter { it !in keep }.forEach { e.remove(it) }
         e.apply()
@@ -613,6 +613,8 @@ class MainActivity : VActivity() {
     private var lastWeather = 0L
     override fun onResume() {
         super.onResume()
+        // Chưa kích hoạt (hoặc đã xoá dữ liệu ứng dụng) thì chỉ hiện màn hình nhập key
+        if (!Act.ok(this)) { startActivity(Intent(this, ActivationActivity::class.java)); return }
         if ((uiScale(this) * 1000).toInt() != scaleKey) { recreate(); return }
         applyAll()
         tick.removeCallbacks(tickR); tickR.run()
