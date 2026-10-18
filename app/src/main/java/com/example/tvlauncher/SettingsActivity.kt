@@ -116,9 +116,18 @@ fun recoverPin(c: Context, done: () -> Unit) {
     val code = (100000..999999).random().toString()
     toast(c, "Đang gửi mã tới $mail…")
     thread {
-        val ok = try { httpGet("$RECOVERY_URL?to=${URLEncoder.encode(mail, "UTF-8")}&code=$code").contains("ok") } catch (e: Exception) { false }
+        val r = try { httpGet("$RECOVERY_URL?to=${URLEncoder.encode(mail, "UTF-8")}&code=$code").trim() } catch (e: Exception) { "net" }
         Handler(Looper.getMainLooper()).post {
-            if (!ok) { toast(c, "Không gửi được mã. Kiểm tra mạng"); return@post }
+            if (!r.contains("ok")) {
+                // Script gửi mã có giới hạn lượt nhận: wait = vừa gửi xong, limit = Gmail này nhận đủ mã, full/quota = hết lượt gửi trong ngày
+                toast(c, when (r) {
+                    "wait" -> "Vừa gửi mã xong. Đợi khoảng 1 phút rồi thử lại"
+                    "limit" -> "Gmail này đã nhận quá nhiều mã. Hãy thử lại sau 1 giờ"
+                    "full", "quota" -> "Hôm nay hệ thống đã hết lượt gửi mã. Hãy thử lại vào ngày mai"
+                    else -> "Không gửi được mã. Kiểm tra mạng"
+                })
+                return@post
+            }
             Apps.putStr(c, "rc_hash", sha(code)); Apps.putStr(c, "rc_exp", (System.currentTimeMillis() + 600000).toString())
             val et = numField(c, "Mã 6 số", 6)
             AlertDialog.Builder(c).setTitle("Nhập mã đã gửi tới $mail").setView(column(c, et))
@@ -247,20 +256,9 @@ class SettingsActivity : VActivity() {
         list.removeAllViews()
         list.addView(TextView(this).apply { text = "TV Launcher"; textSize = 24f; setTextColor(0xFF4D6BFF.toInt()); setPadding(dp(24), 0, 0, dp(12)) })
         item("Giới thiệu", "v$APP_VERSION", false, null, null) { showAbout() }
-        item("Hướng dẫn cho TV Xiaomi nội địa", null, false, null, null) { xiaomiHelp() }
-        item("Đặt làm giao diện mặc định", homeLabel(), false, null, null) { setDefaultHome() }
-        item("Chặn về giao diện gốc của TV", guardLabel(), false, null, { Apps.del(this, "hg_on", "hg_off"); HomeGuard.refresh() }) { guardDialog() }
-        item("Chặn voice gốc của TV (tiếng Trung)", voiceGuardLabel(), false, null, { Apps.del(this, "vg_on", "vg_off"); VoiceGuard.refresh() }) { voiceGuardDialog() }
-        item("Kiểm tra chặn giao diện gốc", null, false, null, null) { guardInfoDialog() }
-        item("Độ phân giải màn hình", resLabel(), false, null, { Apps.del(this, "dispmode"); applyDisplayMode(this) }) { resolutionDialog() }
-        choice("Kích cỡ TV", "tvsize", TV_SIZES, 0, true)
-        choice("Tinh chỉnh độ lớn giao diện", "tvfine", FINE_LABELS, 2, true)
-        item("Mục trên màn hình chính", Secs.load(this).size.let { if (it == 0) "Chưa có" else "$it mục" }, false, null, null) { secListDialog(this) { build() } }
-        toggle("Hiện nút + ở cuối mỗi mục", "sec_plus", true)
         item("Chuyển đầu vào (HDMI/AV)", null, false, null, null) { pickInput(this) }
         item("Cài đặt hệ thống", null, false, null, null) { openSystemSettings(this) }
-        val vp = Apps.str(this, "voice_pkg")
-        item("Trợ lý giọng nói", vp?.let { p -> Apps.loadAll(this).firstOrNull { it.pkg == p }?.label } ?: "Tự động", false, null, { Apps.del(this, "voice_pkg") }) { chooseVoice() }
+        item("Cài đặt tivi", tvSettingsLabel() ?: "Chưa chọn", false, null, { Apps.del(this, "tvset_cmp") }) { openTvSettings() }
         choice("Chiều cao danh mục", "cat_h", arrayOf("Thấp", "Vừa", "Cao"), 1)
         choice("Bo góc ứng dụng", "radius", arrayOf("Vuông", "Vừa", "Tròn"), 1)
         item("Khởi động cùng thiết bị", bootLabel(), false, null, { Apps.del(this, "boot_src", "boot", "boot_app") }) { bootDialog() }
@@ -268,10 +266,6 @@ class SettingsActivity : VActivity() {
         val clear = { Apps.del(this, "bg_uri", "bg_type") }
         item("Thay đổi ảnh nền", bgLabel("image"), false, null, clear) { pick("image/*", 1) }
         item("Đặt video làm ảnh nền", bgLabel("video"), false, null, clear) { pick("video/*", 2) }
-        choice("Cài đặt độ phân giải ảnh nền", "imgres", arrayOf("Full HD (1080p)", "2K (1440p)", "4K (2160p)", "Gốc"), 0)
-        choice("Chất lượng màu ảnh nền", "imgq", arrayOf("Cao (32-bit, mịn hơn)", "Tiết kiệm RAM (16-bit)"), 0)
-        choice("Kiểu phóng to ảnh nền", "imgscale", arrayOf("Mượt (làm mịn)", "Sắc nét (giữ ô vuông, hợp ảnh pixel)"), 0)
-        choice("Cài đặt độ phân giải video hình nền", "res", arrayOf("Gốc", "Full HD (1080p)", "2K (1440p)", "4K (2160p)"), 0)
         choice("Múi giờ", "tz", arrayOf("Theo hệ thống TV", "Việt Nam (GMT+7)", "UTC", "Nhật Bản (GMT+9)", "New York", "Trung Quốc (GMT+8)"), 1)
         toggle("Hiển thị lịch âm", "lunar", true)
         item("Hiển thị tiện ích thời tiết", null, false, !Apps.isHidden(this, "@weather"), { Apps.setHidden(this, "@weather", false) }) {
@@ -283,22 +277,10 @@ class SettingsActivity : VActivity() {
         toggle("Hiển thị đầu vào MiTV", "mitv", false)
         item("Vị trí hàng Đầu vào", if (Apps.inputsAbove(this)) "Trên Yêu thích" else "Dưới Yêu thích", false, null, { Apps.setInputsAbove(this, false) }) {
             Apps.setInputsAbove(this, !Apps.inputsAbove(this)); build() }
-        toggle("Cho phép chọn tiện ích", "pick", true)
-        item("Thiết lập lại tiện ích", null, false, null, null) {
-            listOf("@weather", "@clock", "@favs", "@inputs").forEach { Apps.setHidden(this, it, false); Apps.del(this, "size_$it", "fs_$it") }
-            Secs.load(this).forEach { Apps.setHidden(this, Secs.key(it.id), false); Apps.del(this, "ssz_${it.id}") }
-            Apps.del(this, "cw_lock", "wx_place", "wx_lat", "wx_lon")
-            Apps.setInputsAbove(this, false)
-            Toast.makeText(this, "Đã thiết lập lại", Toast.LENGTH_SHORT).show(); build() }
         item("Ẩn / hiện ứng dụng", Apps.loadAll(this).count { Apps.isHidden(this, it.pkg) }.let { if (it == 0) "Chưa ẩn" else "Đang ẩn $it" }, false, null, null) { hiddenAppsDialog() }
-        item("Gỡ cài đặt ứng dụng", null, false, null, null) { uninstallDialog() }
         choice("Kích thước ứng dụng", "appsize", arrayOf("Nhỏ", "Vừa", "Lớn"), 1)
         item("Dịch vụ trợ năng", enabledServices().size.let { if (it == 0) "Tắt" else "Bật ($it)" }, false, null, null) { accessibilityDialog() }
         choice("Cỡ chữ", "fontsz", arrayOf("Vừa", "Lớn", "Rất lớn"), 0)
-        toggle("Giảm chuyển động (nên bật cho TV yếu)", "rm", isXiaomi())
-        toggle("Đọc tên ứng dụng (TTS)", "tts", false)
-        item("Cài app không rõ nguồn gốc", null, false, null, null) { guard(this) { unknownDialog() } }
-        item("Quyền ứng dụng", null, false, null, null) { permissionDialog() }
         item("Khoá ứng dụng", if (Apps.str(this, "pin") == null) "Tắt" else "Đang bật (PIN ${pinLen(this)} số)", true, null, null) { lockDialog() }
         item("Khôi phục cài đặt TV Launcher", null, true, null, null) { guard(this) { confirmReset() } }
         list.addView(TextView(this).apply { text = "TV Launcher By Lộc Hưng"; textSize = 14f; setTextColor(Color.WHITE); gravity = Gravity.CENTER; setPadding(0, dp(24), 0, 0) })
@@ -797,6 +779,64 @@ class SettingsActivity : VActivity() {
             "• Chọn đúng Kích cỡ TV (32, 43, 55, 65, 75, 85 inch...) để chữ và biểu tượng vừa mắt; chưa vừa thì dùng Tinh chỉnh độ lớn.\n" +
             "• Nếu TV yếu, giữ bật \"Giảm chuyển động\" và dùng ảnh nền thay vì video 4K.\n" +
             "• Nếu không chọn được ảnh/video nền, dùng \"Duyệt bộ nhớ / USB\".").setPositiveButton("Đóng", null).show()
+    }
+
+    // Cài đặt tivi: mở màn hình cài đặt riêng của TV (hình ảnh, âm thanh...). Mỗi hãng đặt màn hình này ở một nơi khác nhau
+    // nên chọn một lần trong danh sách, lần sau bấm là mở thẳng. Nhấn giữ dòng này để chọn lại.
+    private fun tvSettingsComp(): android.content.ComponentName? {
+        val cn = Apps.str(this, "tvset_cmp")?.let { android.content.ComponentName.unflattenFromString(it) } ?: return null
+        return try { packageManager.getActivityInfo(cn, 0); cn } catch (e: Exception) { null }
+    }
+
+    private fun tvSettingsLabel(): String? {
+        val cn = tvSettingsComp() ?: return null
+        return try { packageManager.getActivityInfo(cn, 0).loadLabel(packageManager).toString() } catch (e: Exception) { null }
+    }
+
+    private fun openTvSettings() {
+        val cn = tvSettingsComp()
+        if (cn == null) { chooseTvSettings(); return }
+        if (!safeStart(this, Intent(Intent.ACTION_MAIN).setComponent(cn))) {
+            toast(this, "Không mở được, hãy chọn lại"); chooseTvSettings()
+        }
+    }
+
+    private fun chooseTvSettings() {
+        val pm = packageManager
+        val found = LinkedHashMap<String, android.content.pm.ResolveInfo>()
+        val cats = listOf("android.intent.category.LEANBACK_SETTINGS", Intent.CATEGORY_LEANBACK_LAUNCHER, Intent.CATEGORY_LAUNCHER)
+        for (cat in cats) {
+            try {
+                for (r in pm.queryIntentActivities(Intent(Intent.ACTION_MAIN).addCategory(cat), 0)) {
+                    val ai = r.activityInfo ?: continue
+                    if (ai.packageName == packageName) continue
+                    val k = ai.packageName + "/" + ai.name
+                    if (!found.containsKey(k)) found[k] = r
+                }
+            } catch (e: Exception) {}
+        }
+        val all = found.values.sortedBy { it.loadLabel(pm).toString().lowercase() }
+        if (all.isEmpty()) { toast(this, "Không tìm thấy ứng dụng cài đặt nào"); return }
+        val keys = listOf("setting", "cài đặt", "设置", "mitv", "picture", "tvmanager")
+        val likely = all.filter { r ->
+            val t = (r.loadLabel(pm).toString() + " " + r.activityInfo.packageName).lowercase()
+            keys.any { t.contains(it) }
+        }
+        fun show(src: List<android.content.pm.ResolveInfo>, more: Boolean) {
+            val names = src.map { it.loadLabel(pm).toString() + "  •  " + it.activityInfo.packageName }.toMutableList()
+            if (more) names.add("Xem tất cả ứng dụng…")
+            AlertDialog.Builder(this).setTitle("Chọn màn hình Cài đặt tivi (hình ảnh, âm thanh...)")
+                .setItems(names.toTypedArray()) { _, i ->
+                    if (i >= src.size) show(all, false)
+                    else {
+                        val ai = src[i].activityInfo
+                        val c = android.content.ComponentName(ai.packageName, ai.name)
+                        Apps.putStr(this, "tvset_cmp", c.flattenToString()); build()
+                        if (!safeStart(this, Intent(Intent.ACTION_MAIN).setComponent(c))) toast(this, "Không mở được mục này, hãy chọn mục khác")
+                    }
+                }.setNegativeButton("Đóng", null).show()
+        }
+        if (likely.isEmpty()) show(all, false) else show(likely, likely.size < all.size)
     }
 
     private fun chooseVoice() {
