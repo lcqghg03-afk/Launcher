@@ -292,10 +292,14 @@ fun chipBg(c: Context): StateListDrawable = StateListDrawable().apply {
     addState(intArrayOf(), GradientDrawable().apply { cornerRadius = c.dp(16).toFloat(); setColor(0x44000000); setStroke(c.dp(1), 0x88FFFFFF.toInt()) })
 }
 
-/** Nền ô giờ + thời tiết: hoàn toàn trong suốt, chỉ hiện viền sáng khi đang được chọn bằng điều khiển */
-fun cwBg(c: Context): StateListDrawable = StateListDrawable().apply {
-    addState(intArrayOf(android.R.attr.state_focused), GradientDrawable().apply { cornerRadius = c.dp(16).toFloat(); setColor(0x22FFFFFF); setStroke(c.dp(2), Color.WHITE) })
-    addState(intArrayOf(), GradientDrawable().apply { cornerRadius = c.dp(16).toFloat(); setColor(0) })
+/** Nền ô giờ + thời tiết: mặc định hoàn toàn trong suốt (chỉ hiện viền sáng khi đang được chọn bằng điều khiển).
+ *  Chọn màu ở Cài đặt > "Màu nền giờ và thời tiết" thì ô được tô màu đó, bo góc, có viền mảnh */
+fun cwBg(c: Context): StateListDrawable {
+    val fill = zoneColor(c, ZONE_CW)
+    return StateListDrawable().apply {
+        addState(intArrayOf(android.R.attr.state_focused), GradientDrawable().apply { cornerRadius = c.dp(16).toFloat(); setColor(if (fill == 0) 0x22FFFFFF else fill); setStroke(c.dp(2), Color.WHITE) })
+        addState(intArrayOf(), GradientDrawable().apply { cornerRadius = c.dp(16).toFloat(); setColor(fill); if (fill != 0) setStroke(c.dp(1), 0x66FFFFFF) })
+    }
 }
 
 fun wmo(code: Int) = when (code) {
@@ -391,6 +395,7 @@ object Apps {
     fun str(c: Context, k: String): String? = sp(c).getString(k, null)
     fun putStr(c: Context, k: String, v: String) = sp(c).edit().putString(k, v).apply()
     fun del(c: Context, vararg k: String) { val e = sp(c).edit(); k.forEach { e.remove(it) }; e.apply() }
+    fun has(c: Context, k: String) = sp(c).contains(k)
     /** Khôi phục TV Launcher về mặc định: xoá mọi cài đặt đã lưu (kể cả yêu thích, ứng dụng ẩn, ảnh nền, vị trí thời tiết...).
      *  Chỉ giữ lại mã PIN, Gmail khôi phục và danh sách ứng dụng đã khoá để không vô tình mở khoá ứng dụng */
     fun resetAll(c: Context) {
@@ -477,35 +482,83 @@ fun sizeDialog(c: Context, key: String, title: String, onChange: () -> Unit) {
 /** Màu nền "kính" dùng cho bảng menu và màn hình Cài đặt: càng nhỏ phần alpha (2 số đầu) càng trong suốt */
 val GLASS_BG = 0x88101018.toInt()
 
-/** Màu nền bảng (Cài đặt, Tất cả ứng dụng, menu ấn giữ ứng dụng, hộp thoại). Lưu ở khoá "panel_color":
- *  PANEL_GLASS (0) = kính trong suốt, còn lại là màu ARGB. Mặc định là nền đặc, không trong suốt */
+/** Màu nền bảng. Mỗi vùng có một khoá riêng lưu màu ARGB (đều chọn được trong Cài đặt, cùng một bảng màu):
+ *  ZONE_PANEL "panel_color" = màn hình Cài đặt + hộp thoại (khoá cũ, giữ nguyên nên không mất màu đã chọn)
+ *  ZONE_APPS  "apps_color"  = màn hình Tất cả ứng dụng
+ *  ZONE_MENU  "menu_color"  = menu khi ấn giữ lâu một ứng dụng
+ *  ZONE_CW    "cw_color"    = ô giờ + thời tiết ở màn hình chính
+ *  PANEL_GLASS (0) = kính trong suốt (riêng ô giờ + thời tiết thì 0 = hoàn toàn trong suốt, như bản cũ).
+ *  APPS / MENU chưa chọn riêng thì tự theo màu của ZONE_PANEL. Mặc định của ZONE_PANEL là nền đặc, không trong suốt */
 const val PANEL_GLASS = 0
+const val ZONE_PANEL = "panel_color"
+const val ZONE_APPS = "apps_color"
+const val ZONE_MENU = "menu_color"
+const val ZONE_CW = "cw_color"
 val PANEL_DEFAULT = 0xFF101018.toInt()
 
-/** Các màu có sẵn trong bảng chọn màu (đều là màu tối vừa để chữ trắng vẫn đọc rõ) */
+/** Khoá lưu màu tự build gần nhất của một vùng ("panel_custom" giữ như bản cũ) */
+fun zoneCustomKey(zone: String) = zone.removeSuffix("_color") + "_custom"
+
+/** Các màu có sẵn trong bảng chọn màu (đều là màu tối vừa để chữ trắng vẫn đọc rõ). Xếp theo nhóm: trung tính, xanh dương, xanh lá, vàng cam, đỏ hồng, tím, nâu */
 val PANEL_PRESETS: List<Pair<String, Int>> = listOf(
     "Trong suốt" to PANEL_GLASS,
     "Đen xanh (mặc định)" to PANEL_DEFAULT,
     "Đen" to 0xFF000000.toInt(),
     "Xám than" to 0xFF2B2B33.toInt(),
+    "Xám đá" to 0xFF3D4048.toInt(),
+    "Xám xanh" to 0xFF37474F.toInt(),
+    "Xám tro" to 0xFF55585F.toInt(),
+    "Xám bạc" to 0xFF6B7078.toInt(),
+    "Xanh đêm" to 0xFF0B1E3F.toInt(),
     "Xanh navy" to 0xFF14285F.toInt(),
+    "Xanh hoàng gia" to 0xFF1B3A8A.toInt(),
     "Xanh dương" to 0xFF1E4FA8.toInt(),
+    "Xanh cobalt" to 0xFF2563C9.toInt(),
+    "Xanh biển" to 0xFF0D5C8F.toInt(),
+    "Xanh da trời" to 0xFF1B76B5.toInt(),
+    "Xanh lơ" to 0xFF3A8DBE.toInt(),
     "Xanh ngọc" to 0xFF0F5C63.toInt(),
+    "Xanh bạc hà" to 0xFF1F7A6B.toInt(),
+    "Xanh lục bảo" to 0xFF0B6E4F.toInt(),
     "Xanh lá" to 0xFF1B5E3A.toInt(),
+    "Xanh rêu" to 0xFF3D5A27.toInt(),
+    "Xanh olive" to 0xFF55601F.toInt(),
+    "Xanh lá mạ" to 0xFF6B8E23.toInt(),
     "Vàng đồng" to 0xFF7A5A12.toInt(),
+    "Vàng nghệ" to 0xFFA6780A.toInt(),
     "Cam đất" to 0xFF9A4A14.toInt(),
+    "Cam cháy" to 0xFFB5530F.toInt(),
+    "Đỏ gạch" to 0xFF8C2F1F.toInt(),
     "Đỏ rượu" to 0xFF6E1626.toInt(),
+    "Đỏ đô" to 0xFF800020.toInt(),
+    "Đỏ tươi" to 0xFFB02A2A.toInt(),
     "Hồng đậm" to 0xFF9C2A62.toInt(),
+    "Hồng cánh sen" to 0xFFB0306E.toInt(),
+    "Hồng tím" to 0xFF8E2A7E.toInt(),
     "Tím" to 0xFF4B2A8C.toInt(),
     "Tím than" to 0xFF2A1B4D.toInt(),
-    "Nâu" to 0xFF4A3426.toInt()
+    "Tím mận" to 0xFF5B1F55.toInt(),
+    "Tím chàm" to 0xFF3A2A7A.toInt(),
+    "Tím oải hương" to 0xFF6A5AAE.toInt(),
+    "Nâu" to 0xFF4A3426.toInt(),
+    "Nâu socola" to 0xFF3B2418.toInt(),
+    "Nâu cà phê" to 0xFF5C4033.toInt(),
+    "Nâu đất" to 0xFF7A5230.toInt(),
+    "Nâu cát" to 0xFF8A6E4B.toInt()
 )
 
-fun panelColor(c: Context): Int = Apps.int(c, "panel_color", PANEL_DEFAULT)
+/** Màu đang dùng của một vùng (xem ZONE_*) */
+fun zoneColor(c: Context, zone: String): Int = when (zone) {
+    ZONE_PANEL -> Apps.int(c, ZONE_PANEL, PANEL_DEFAULT)
+    ZONE_CW -> Apps.int(c, ZONE_CW, 0)
+    else -> Apps.int(c, zone, Apps.int(c, ZONE_PANEL, PANEL_DEFAULT))   // chưa chọn riêng thì theo "Màu nền bảng"
+}
+
+fun panelColor(c: Context): Int = zoneColor(c, ZONE_PANEL)
 
 /** Màu tô thật của tấm bảng: chọn "Trong suốt" thì dùng nền kính, còn lại dùng đúng màu đã chọn */
-fun panelFill(c: Context, overlay: Boolean = false): Int {
-    val p = panelColor(c)
+fun panelFill(c: Context, overlay: Boolean = false, zone: String = ZONE_PANEL): Int {
+    val p = zoneColor(c, zone)
     val base = if (p == PANEL_GLASS) GLASS_BG else p
     // Hộp thoại / menu nổi lên trên một màn hình khác: không để quá mờ, nếu không sẽ thấy lờ mờ nội dung màn hình phía sau xuyên qua
     return if (overlay && Color.alpha(base) < 0xE0) Color.argb(0xE0, Color.red(base), Color.green(base), Color.blue(base)) else base
@@ -513,14 +566,14 @@ fun panelFill(c: Context, overlay: Boolean = false): Int {
 
 /** Nền phủ cả màn hình Cài đặt / Tất cả ứng dụng: bảng đặc thì phủ kín bằng màu tối hơn một chút (không còn thấy màn hình chính phía sau),
  *  kính hoặc màu có độ mờ thì để trong suốt như trước */
-fun screenBg(c: Context): Int {
-    val p = panelColor(c)
+fun screenBg(c: Context, zone: String = ZONE_PANEL): Int {
+    val p = zoneColor(c, zone)
     if (p == PANEL_GLASS || Color.alpha(p) < 255) return 0
     return Color.rgb(Color.red(p) * 55 / 100, Color.green(p) * 55 / 100, Color.blue(p) * 55 / 100)
 }
 
-/** Kích thước bảng Cài đặt / Tất cả ứng dụng. Khoá "panel_size": 0 = rút gọn (chừa lề quanh bảng), 1 = đầy màn hình (không chừa lề) */
-fun panelFull(c: Context): Boolean = Apps.int(c, "panel_size", 0) == 1
+/** Kích thước bảng Cài đặt / Tất cả ứng dụng. Khoá "panel_mode": 0 = full màn hình (mặc định, không chừa lề), 1 = rút gọn màn hình (chừa lề quanh bảng) */
+fun panelFull(c: Context): Boolean = Apps.int(c, "panel_mode", 0) == 0
 
 /** Lề của bảng trong khung màn hình: dh / dv là lề ngang / dọc (dp) khi rút gọn, đầy màn hình thì không chừa lề */
 fun panelParams(c: Context, dh: Int, dv: Int): FrameLayout.LayoutParams = FrameLayout.LayoutParams(-1, -1).apply {
@@ -528,10 +581,10 @@ fun panelParams(c: Context, dh: Int, dv: Int): FrameLayout.LayoutParams = FrameL
 }
 
 /** Tấm nền có viền mảnh, dùng chung cho bảng menu, màn hình Cài đặt, Tất cả ứng dụng và hộp thoại. Màu theo mục "Màu nền bảng" trong Cài đặt */
-fun glassPanel(c: Context, overlay: Boolean = false): GradientDrawable = GradientDrawable().apply { setColor(panelFill(c, overlay)); setStroke(c.dp(1), 0x66FFFFFF) }
+fun glassPanel(c: Context, overlay: Boolean = false, zone: String = ZONE_PANEL): GradientDrawable = GradientDrawable().apply { setColor(panelFill(c, overlay, zone)); setStroke(c.dp(1), 0x66FFFFFF) }
 
 /** Bảng menu trong suốt (nhìn xuyên được màn hình phía sau), dòng đang chọn có khung vuông trắng bao quanh */
-fun glassMenu(c: Context, title: String, labels: List<String>, focus: Int = 0, pick: (Int) -> Unit) {
+fun glassMenu(c: Context, title: String, labels: List<String>, focus: Int = 0, zone: String = ZONE_PANEL, pick: (Int) -> Unit) {
     val d = android.app.Dialog(c)
     d.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
     val fs = Apps.fs(c)
@@ -554,7 +607,7 @@ fun glassMenu(c: Context, title: String, labels: List<String>, focus: Int = 0, p
     val col = LinearLayout(c).apply {
         orientation = LinearLayout.VERTICAL
         setPadding(c.dp(12), c.dp(12), c.dp(12), c.dp(12))
-        background = glassPanel(c, true)
+        background = glassPanel(c, true, zone)
         addView(TextView(c).apply {
             text = title; textSize = 22f * fs; setTextColor(Color.WHITE); maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
             setPadding(c.dp(16), c.dp(8), c.dp(16), c.dp(12))
@@ -576,8 +629,8 @@ fun glassMenu(c: Context, title: String, labels: List<String>, focus: Int = 0, p
 // ---- Hộp thoại kiểu kính: mọi hộp thoại trong app đi qua GlassBuilder nên cùng một kiểu với menu và màn hình Cài đặt ----
 
 /** Dùng thay cho AlertDialog.Builder. Ngay khi hiện lên, hộp thoại được đổi sang kiểu kính (xem glassify) */
-class GlassBuilder(c: Context) : AlertDialog.Builder(c) {
-    override fun show(): AlertDialog { val d = super.show(); glassify(d); return d }
+class GlassBuilder(c: Context, private val zone: String = ZONE_PANEL) : AlertDialog.Builder(c) {
+    override fun show(): AlertDialog { val d = super.show(); glassify(d, zone); return d }
 }
 
 /** Ô nhập / nút bấm trong hộp thoại: nền đặc để luôn nhìn rõ chữ dù bảng trong suốt; viền mảnh khi thường, khung vuông trắng dày khi đang được chọn */
@@ -600,7 +653,7 @@ private fun lum(col: Int) = (0.299f * Color.red(col) + 0.587f * Color.green(col)
 /** Đổi một hộp thoại vừa hiện sang kiểu kính: nền trong suốt nhìn xuyên được, không làm tối màn hình phía sau,
  *  mục / nút đang chọn có khung vuông trắng, chỉ dùng trắng đen (bỏ màu cam, xanh, vàng của hệ thống).
  *  Gọi ngay sau show() (cùng một lượt) nên khung hình đầu tiên đã đúng kiểu, không bị chớp */
-fun glassify(d: AlertDialog) {
+fun glassify(d: AlertDialog, zone: String = ZONE_PANEL) {
     try {
         val c = d.context
         val win = d.window ?: return
@@ -613,7 +666,7 @@ fun glassify(d: AlertDialog) {
             ?: decor.findViewById<android.view.ViewGroup>(android.R.id.content)?.getChildAt(0) ?: return
         IDS_DIVIDER.forEach { decor.findViewById<View>(it)?.visibility = View.GONE }
         glassTree(c, root)   // trước, vì bước này xoá nền có sẵn của mọi khung (kể cả khung ngoài cùng)
-        root.background = glassPanel(c, true)
+        root.background = glassPanel(c, true, zone)
         root.setPadding(c.dp(12), c.dp(12), c.dp(12), c.dp(12))
     } catch (e: Exception) { /* kiểu mặc định vẫn dùng được */ }
 }
@@ -700,7 +753,7 @@ fun showMenu(c: Context, a: AppItem, onChange: () -> Unit) {
     row("Xoá ứng dụng") {
         guard(c) { if (!safeStart(c, Intent(Intent.ACTION_DELETE, Uri.parse("package:${a.pkg}")))) Toast.makeText(c, "TV không cho gỡ ứng dụng ở đây", Toast.LENGTH_LONG).show() }
     }
-    glassMenu(c, a.label, labels) { acts[it]() }
+    glassMenu(c, a.label, labels, 0, ZONE_MENU) { acts[it]() }
 }
 
 /** Menu cho widget / giờ / hàng yêu thích / hàng đầu vào: đổi kích thước, chuyển lên/xuống, ẩn */
@@ -869,6 +922,7 @@ class MainActivity : VActivity() {
 
     // Phóng to/thu nhỏ cả ô giờ + thời tiết quanh góc phải-trên. Dùng scale hình nên KHÔNG đẩy Wi-Fi, cài đặt hay khối khác
     private fun applyBox() {
+        cwBox.background = cwBg(this)   // áp màu nền giờ + thời tiết vừa chọn trong Cài đặt
         val hideClock = Apps.isHidden(this, "@clock"); val hideWeather = Apps.isHidden(this, "@weather")
         timeRow.visibility = if (hideClock) View.GONE else View.VISIBLE
         weather.visibility = if (hideWeather) View.GONE else View.VISIBLE
@@ -1596,7 +1650,7 @@ class AllAppsActivity : VActivity() {
         super.onCreate(b)
         val me = this
         grid = GridView(this).apply {
-            numColumns = 4 + Apps.int(me, "cols", 2); background = glassPanel(me); setPadding(dp(40), dp(40), dp(40), dp(40)); noSysHighlight()
+            numColumns = 4 + Apps.int(me, "cols", 2); background = glassPanel(me, false, ZONE_APPS); setPadding(dp(40), dp(40), dp(40), dp(40)); noSysHighlight()
             // Ô đang chọn: khung vuông trắng bao quanh, thay cho màu cam mặc định của TV
             selector = selectBox(me)
             // Bấm OK / chạm = mở ứng dụng, giữ lâu = menu tuỳ chỉnh
@@ -1622,7 +1676,7 @@ class AllAppsActivity : VActivity() {
             })
         }
         // Lớp phủ kính chừa lề quanh màn hình (giống bảng menu), nhìn xuyên được ảnh nền phía sau
-        setContentView(FrameLayout(this).apply { setBackgroundColor(screenBg(me)); noSysHighlight(); addView(grid, panelParams(me, 32, 24)) })
+        setContentView(FrameLayout(this).apply { setBackgroundColor(screenBg(me, ZONE_APPS)); noSysHighlight(); addView(grid, panelParams(me, 32, 24)) })
     }
     override fun onResume() { super.onResume(); fill() }
     private fun fill() {

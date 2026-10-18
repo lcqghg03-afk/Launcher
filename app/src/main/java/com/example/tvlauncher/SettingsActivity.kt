@@ -43,6 +43,31 @@ private fun mailField(c: Context, v: String?) = EditText(c).apply { inputType = 
 private fun validMail(s: String) = android.util.Patterns.EMAIL_ADDRESS.matcher(s).matches()
 private fun column(c: Context, vararg v: android.view.View) = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL; setPadding(c.dp(24), c.dp(8), c.dp(24), 0); v.forEach { addView(it) } }
 
+/** Một ô trong bảng chọn màu. kind: 0 = màu có sẵn, 1 = ô "Tuỳ chỉnh...", 2 = ô "Theo màu nền bảng" */
+private class PCell(val label: String, val color: Int, val kind: Int)
+
+/** Dải màu bo tròn làm đường chạy cho thanh kéo (cao cố định, đổi màu bằng cách gán colors rồi vẽ lại).
+ *  Thanh Màu sắc dùng dải cầu vồng, các thanh khác dùng dải từ màu thấp tới màu cao để nhìn là biết kéo ra màu gì */
+private class ColorTrack(private val h: Float, var colors: IntArray) : android.graphics.drawable.Drawable() {
+    private val fill = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+    private val edge = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        style = android.graphics.Paint.Style.STROKE; strokeWidth = 2f; color = 0xCCFFFFFF.toInt()
+    }
+    override fun draw(canvas: android.graphics.Canvas) {
+        val b = bounds
+        val cy = b.exactCenterY()
+        val r = android.graphics.RectF(b.left.toFloat(), cy - h / 2f, b.right.toFloat(), cy + h / 2f)
+        fill.shader = android.graphics.LinearGradient(r.left, 0f, r.right, 0f, colors, null, android.graphics.Shader.TileMode.CLAMP)
+        canvas.drawRoundRect(r, h / 2f, h / 2f, fill)
+        canvas.drawRoundRect(r, h / 2f, h / 2f, edge)
+    }
+    override fun getIntrinsicHeight(): Int = h.toInt()
+    override fun setAlpha(alpha: Int) { fill.alpha = alpha }
+    override fun setColorFilter(cf: android.graphics.ColorFilter?) { fill.colorFilter = cf }
+    @Suppress("OVERRIDE_DEPRECATION", "DEPRECATION")
+    override fun getOpacity(): Int = android.graphics.PixelFormat.TRANSLUCENT
+}
+
 /** Khoá ứng dụng: có PIN thì mở cài đặt / xoá / mở ứng dụng đã khoá phải nhập PIN.
  *  Nút "Quên mã?" chỉ hiện khi đã nhập Gmail khôi phục; không có Gmail thì không lấy lại được mã */
 fun guard(c: Context, ok: () -> Unit) {
@@ -280,10 +305,13 @@ class SettingsActivity : VActivity() {
         item("Trợ lý giọng nói", voiceLabel(), false, null, { Apps.del(this, "voice_pkg"); VoiceGuard.refresh() }) { chooseVoice() }
         choice("Chiều cao danh mục", "cat_h", arrayOf("Thấp", "Vừa", "Cao"), 1)
         choice("Bo góc ứng dụng", "radius", arrayOf("Vuông", "Vừa", "Tròn"), 1)
-        item("Kích thước bảng", if (panelFull(this)) "Đầy màn hình" else "Rút gọn", false, null, { Apps.del(this, "panel_size"); applyPanel() }) {
+        item("Kích thước bảng", if (panelFull(this)) "Full màn hình" else "Rút gọn màn hình", false, null, { Apps.del(this, "panel_mode"); applyPanel() }) {
             GlassBuilder(this).setTitle("Kích thước bảng (Cài đặt, Tất cả ứng dụng)")
-                .setSingleChoiceItems(arrayOf("Rút gọn", "Đầy màn hình"), Apps.int(this, "panel_size", 0)) { d, i -> Apps.putInt(this, "panel_size", i); d.dismiss(); applyPanel(); build() }.show() }
-        item("Màu nền bảng", panelLabel(), false, null, { Apps.del(this, "panel_color", "panel_custom"); applyPanel() }) { panelColorDialog() }
+                .setSingleChoiceItems(arrayOf("Full màn hình", "Rút gọn màn hình"), Apps.int(this, "panel_mode", 0)) { d, i -> Apps.putInt(this, "panel_mode", i); d.dismiss(); applyPanel(); build() }.show() }
+        item("Màu nền bảng", zoneLabel(ZONE_PANEL), false, null, { zoneReset(ZONE_PANEL); applyPanel() }) { zoneColorDialog(ZONE_PANEL, "Màu nền bảng (Cài đặt)") }
+        item("Màu nền Tất cả ứng dụng", zoneLabel(ZONE_APPS), false, null, { zoneReset(ZONE_APPS) }) { zoneColorDialog(ZONE_APPS, "Màu nền Tất cả ứng dụng") }
+        item("Màu nền menu ấn giữ ứng dụng", zoneLabel(ZONE_MENU), false, null, { zoneReset(ZONE_MENU) }) { zoneColorDialog(ZONE_MENU, "Màu nền menu ấn giữ ứng dụng") }
+        item("Màu nền giờ và thời tiết", zoneLabel(ZONE_CW), false, null, { zoneReset(ZONE_CW) }) { zoneColorDialog(ZONE_CW, "Màu nền giờ và thời tiết") }
         item("Khởi động cùng thiết bị", bootLabel(), false, null, { Apps.del(this, "boot_src", "boot", "boot_app") }) { bootDialog() }
         choice("Số cột ứng dụng", "cols", arrayOf("4", "5", "6", "7", "8"), 2)
         val clear = { Apps.del(this, "bg_uri", "bg_type") }
@@ -304,8 +332,8 @@ class SettingsActivity : VActivity() {
         choice("Kích thước ứng dụng", "appsize", arrayOf("Nhỏ", "Vừa", "Lớn"), 1)
         item("Dịch vụ trợ năng", enabledServices().size.let { if (it == 0) "Tắt" else "Bật ($it)" }, false, null, null) { accessibilityDialog() }
         choice("Cỡ chữ", "fontsz", arrayOf("Vừa", "Lớn", "Rất lớn"), 0)
-        item("Khoá ứng dụng", if (Apps.str(this, "pin") == null) "Tắt" else "Đang bật (PIN ${pinLen(this)} số)", true, null, null) { lockDialog() }
-        item("Khôi phục cài đặt TV Launcher", null, true, null, null) { guard(this) { confirmReset() } }
+        item("Khoá ứng dụng", if (Apps.str(this, "pin") == null) "Tắt" else "Đang bật (PIN ${pinLen(this)} số)", false, null, null) { lockDialog() }
+        item("Khôi phục cài đặt TV Launcher", null, false, null, null) { guard(this) { confirmReset() } }
         // Xếp tất cả các dòng cài đặt theo thứ tự abc tiếng Việt (cùng cách xếp với danh sách ứng dụng: bỏ dấu, Đ = D), tiêu đề và dòng cuối trang giữ nguyên chỗ
         val rows = (firstRow until list.childCount).map { list.getChildAt(it) }
         rows.forEach { list.removeView(it) }
@@ -381,47 +409,65 @@ class SettingsActivity : VActivity() {
         ).setPositiveButton("Đóng", null).show()
     }
 
-    // Tên màu đang dùng, hiện ở dòng "Màu nền bảng"
-    private fun panelLabel(): String {
-        val cur = panelColor(this)
-        return PANEL_PRESETS.firstOrNull { it.second == cur }?.first ?: "Tuỳ chỉnh"
+    // Chữ hiện ở dòng cài đặt màu của một vùng: tên màu có sẵn, hoặc "Tuỳ chỉnh #RRGGBB"
+    private fun zoneLabel(zone: String): String {
+        if (zone != ZONE_PANEL && zone != ZONE_CW && !Apps.has(this, zone)) return "Theo màu nền bảng"
+        val cur = zoneColor(this, zone)
+        return PANEL_PRESETS.firstOrNull { it.second == cur }?.first ?: ("Tuỳ chỉnh #%06X".format(cur and 0xFFFFFF))
     }
 
-    // Bảng chọn màu nền cho Cài đặt, Tất cả ứng dụng và menu ấn giữ ứng dụng: "Trong suốt", các màu có sẵn và "Tuỳ chỉnh"
-    private fun panelColorDialog() {
+    // Nhấn giữ dòng: xoá màu đã chọn của vùng, về mặc định
+    private fun zoneReset(zone: String) { Apps.del(this, zone, zoneCustomKey(zone)) }
+
+    // Chỉ màn hình Cài đặt này đổi màu ngay; các vùng khác (Tất cả ứng dụng, menu, giờ + thời tiết) áp dụng khi mở lại, ở đây chỉ cập nhật chữ trên dòng
+    private fun zoneChanged(zone: String) { if (zone == ZONE_PANEL) applyPanel(); build() }
+
+    // Bảng chọn màu cho một vùng (Cài đặt, Tất cả ứng dụng, menu ấn giữ ứng dụng, giờ + thời tiết): "Trong suốt", nhiều màu có sẵn và "Tuỳ chỉnh..."
+    // Các vùng Tất cả ứng dụng / menu có thêm ô "Theo màu nền bảng" để quay về dùng chung màu với Cài đặt
+    private fun zoneColorDialog(zone: String, title: String) {
         val me = this
-        val cur = panelColor(me)
+        val cur = zoneColor(me, zone)
+        val explicit = zone == ZONE_PANEL || zone == ZONE_CW || Apps.has(me, zone)   // đã chọn màu riêng cho vùng này chưa
         val isPreset = PANEL_PRESETS.any { it.second == cur }
         var dlg: AlertDialog? = null
         var curView: View? = null
-        // Mỗi ô: tên, màu tô, có phải ô "Tuỳ chỉnh" không
-        val cells = PANEL_PRESETS.map { Triple(it.first, it.second, false) } +
-            Triple("Tuỳ chỉnh...", Apps.int(me, "panel_custom", PANEL_DEFAULT), true)
+        val cells = ArrayList<PCell>()
+        if (zone != ZONE_PANEL && zone != ZONE_CW) cells.add(PCell("Theo màu nền bảng", zoneColor(me, ZONE_PANEL), 2))
+        PANEL_PRESETS.forEach { cells.add(PCell(it.first, it.second, 0)) }
+        cells.add(PCell("Tuỳ chỉnh...", Apps.int(me, zoneCustomKey(zone), PANEL_DEFAULT), 1))
         val col = LinearLayout(me).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(4), dp(4), dp(4), dp(4)) }
         cells.chunked(4).forEach { chunk ->
             val row = LinearLayout(me).apply { orientation = LinearLayout.HORIZONTAL }
             chunk.forEach { cell ->
-                val label = cell.first; val color = cell.second; val custom = cell.third
-                val isCur = if (custom) (!isPreset && cur != PANEL_GLASS) else color == cur
-                // Ô "Trong suốt" vẽ dạng chuyển dần từ tối sang sáng cho dễ nhận ra, các ô khác là màu đặc
+                val label = cell.label; val color = cell.color; val kind = cell.kind
+                val isCur = when (kind) {
+                    2 -> !explicit
+                    1 -> explicit && !isPreset && cur != PANEL_GLASS
+                    else -> explicit && color == cur
+                }
+                // Ô "Trong suốt" chuyển dần từ tối sang sáng, ô "Tuỳ chỉnh..." dải màu cầu vồng, các ô khác là màu đặc.
+                // Mọi ô đều có viền trắng rõ để ô trùng màu với nền hộp thoại (vd Đen xanh) không bị chìm mất
+                val solid = color   // đặt tên riêng để trong apply{} không lẫn với thuộc tính color của GradientDrawable
                 fun box(w: Int, edge: Int): GradientDrawable =
-                    (if (color == PANEL_GLASS) GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(0xFF101018.toInt(), 0xFF5A5A78.toInt()))
-                     else GradientDrawable().apply { setColor(color) }).apply { setStroke(dp(w), edge) }
+                    (when {
+                        kind == 1 -> GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(0xFFB91C1C.toInt(), 0xFFCA8A04.toInt(), 0xFF15803D.toInt(), 0xFF0E7490.toInt(), 0xFF1D4ED8.toInt(), 0xFF7E22CE.toInt()))
+                        color == PANEL_GLASS -> GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(0xFF101018.toInt(), 0xFF5A5A78.toInt()))
+                        else -> GradientDrawable().apply { setColor(solid) }
+                    }).apply { setStroke(dp(w), edge) }
                 val cellView = TextView(me).apply {
                     text = (if (isCur) "✓ " else "") + label
-                    textSize = 14f; gravity = Gravity.CENTER; setTextColor(Color.WHITE); shade()
+                    textSize = 16f; gravity = Gravity.CENTER; maxLines = 2; setTextColor(Color.WHITE); setTypeface(null, android.graphics.Typeface.BOLD); shade()
                     isFocusable = true; isClickable = true
                     background = android.graphics.drawable.StateListDrawable().apply {
                         addState(intArrayOf(android.R.attr.state_focused), box(4, Color.WHITE))
-                        addState(intArrayOf(), box(1, 0xAAFFFFFF.toInt()))
+                        addState(intArrayOf(), box(2, 0xDDFFFFFF.toInt()))
                     }
                     setOnClickListener {
                         dlg?.dismiss()
-                        if (custom) customPanelDialog()
-                        else {
-                            Apps.putInt(me, "panel_color", color)
-                            applyPanel(); build()
-                            toast(me, "Đã đổi màu nền bảng: $label")
+                        when (kind) {
+                            1 -> customZoneDialog(zone)
+                            2 -> { Apps.del(me, zone); zoneChanged(zone); toast(me, "Đã theo màu nền bảng") }
+                            else -> { Apps.putInt(me, zone, color); zoneChanged(zone); toast(me, "Đã đổi màu: $label") }
                         }
                     }
                 }
@@ -430,44 +476,170 @@ class SettingsActivity : VActivity() {
             }
             col.addView(row, LinearLayout.LayoutParams(-1, -2))
         }
-        dlg = GlassBuilder(me).setTitle("Màu nền bảng")
+        dlg = GlassBuilder(me).setTitle(title)
             .setView(ScrollView(me).apply { addView(col) })
             .setNegativeButton("Đóng", null).show()
         curView?.requestFocus()
     }
 
-    // Tự chọn màu: 3 thanh Đỏ / Xanh lá / Xanh dương và thanh Độ đục, có ô xem trước. Mỗi màu chỉ kéo tới mức tối vừa để chữ trắng vẫn đọc rõ
-    private fun customPanelDialog() {
+    // Ô màu nhỏ (màu đã dùng gần đây): viền trắng mảnh, dày hơn khi đang được chọn
+    private fun swatchBg(fill: Int): android.graphics.drawable.StateListDrawable = android.graphics.drawable.StateListDrawable().apply {
+        addState(intArrayOf(android.R.attr.state_focused), GradientDrawable().apply { setColor(fill); setStroke(dp(4), Color.WHITE) })
+        addState(intArrayOf(), GradientDrawable().apply { setColor(fill); setStroke(dp(2), 0xDDFFFFFF.toInt()) })
+    }
+
+    // Nhập mã màu bằng bàn phím: #RRGGBB, hoặc #AARRGGBB nếu muốn nhập luôn độ đục
+    private fun hexDialog(cur: Int, done: (Int) -> Unit) {
         val me = this
-        val start = panelColor(me).let { if (it == PANEL_GLASS) Apps.int(me, "panel_custom", PANEL_DEFAULT) else it }
-        val v = intArrayOf(Color.alpha(start), Color.red(start), Color.green(start), Color.blue(start))   // độ đục, đỏ, xanh lá, xanh dương
-        val names = arrayOf("Độ đục (thấp = nhìn xuyên được)", "Đỏ", "Xanh lá", "Xanh dương")
-        val col = LinearLayout(me).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(8), dp(8), dp(8), dp(8)) }
-        val preview = TextView(me).apply { text = "Xem trước"; textSize = 18f; gravity = Gravity.CENTER; setTextColor(Color.WHITE); shade() }
-        fun argb() = Color.argb(v[0], v[1], v[2], v[3])
-        fun paint() { preview.background = GradientDrawable().apply { setColor(argb()); setStroke(dp(2), Color.WHITE) } }
-        col.addView(preview, LinearLayout.LayoutParams(-1, dp(72)).apply { bottomMargin = dp(12) })
-        for (i in 0..3) {
-            val lo = if (i == 0) 40 else 0
-            val hi = if (i == 0) 255 else 170
-            v[i] = v[i].coerceIn(lo, hi)
-            col.addView(TextView(me).apply { text = names[i]; textSize = 16f; setTextColor(Color.WHITE); shade() })
-            col.addView(SeekBar(me).apply {
-                max = hi - lo; progress = v[i] - lo; setKeyProgressIncrement(8)
-                setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                    override fun onProgressChanged(s: SeekBar?, p: Int, fromUser: Boolean) { v[i] = p + lo; paint() }
-                    override fun onStartTrackingTouch(s: SeekBar?) {}
-                    override fun onStopTrackingTouch(s: SeekBar?) {}
-                })
-            }, LinearLayout.LayoutParams(-1, -2))
+        val et = EditText(me).apply {
+            setText("#%06X".format(cur and 0xFFFFFF))
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS
+            filters = arrayOf(InputFilter.LengthFilter(9))
+            setSingleLine(true); setSelectAllOnFocus(true)
         }
-        paint()
-        GlassBuilder(me).setTitle("Màu tuỳ chỉnh")
+        GlassBuilder(me).setTitle("Nhập mã màu")
+            .setMessage("Gõ mã dạng #RRGGBB, ví dụ #1E4FA8 (hoặc #AARRGGBB để nhập luôn độ đục)")
+            .setView(column(me, et))
+            .setPositiveButton("Áp dụng") { _, _ ->
+                val t = et.text.toString().trim().removePrefix("#")
+                val n = t.toLongOrNull(16)
+                if ((t.length == 6 || t.length == 8) && n != null) done(if (t.length == 6) (0xFF000000L or n).toInt() else n.toInt())
+                else toast(me, "Mã màu không đúng. Ví dụ: #1E4FA8")
+            }
+            .setNegativeButton("Huỷ", null).show()
+    }
+
+    // Tự build màu cho một vùng. Có ô xem trước và các thanh kéo (mỗi thanh có dải màu để biết kéo ra màu gì):
+    // Màu sắc (cầu vồng), Độ đậm màu, Độ sáng, Độ đục; thêm 3 thanh Đỏ / Xanh lá / Xanh dương, nút nhập mã #RRGGBB
+    // và hàng màu đã lưu gần đây. Mọi thanh đồng bộ với nhau. Dùng phím TRÁI/PHẢI để kéo, LÊN/XUỐNG để đổi thanh
+    private fun customZoneDialog(zone: String) {
+        val me = this
+        val customKey = zoneCustomKey(zone)
+        val recentKey = zone + "_recent"
+        val cur = zoneColor(me, zone)
+        val start = if (cur == PANEL_GLASS) Apps.int(me, customKey, PANEL_DEFAULT) else cur
+        // Trạng thái: color là ARGB đang chọn; hsv giữ riêng để màu xám / đen không làm mất màu sắc đang kéo
+        var color = (start and 0xFFFFFF) or (Color.alpha(start).coerceIn(40, 255) shl 24)
+        val hsv = FloatArray(3)
+        Color.colorToHSV(color, hsv)
+        val recent = (Apps.str(me, recentKey) ?: "").split(",").mapNotNull { it.toIntOrNull() }
+        var sync: () -> Unit = {}   // gán ở dưới, sau khi đã tạo đủ các thanh
+
+        val th = dp(14).toFloat()
+        val hueTrack = ColorTrack(th, IntArray(7) { Color.HSVToColor(floatArrayOf(it * 60f, 1f, 1f)) })
+        val satTrack = ColorTrack(th, intArrayOf(Color.GRAY, Color.RED))
+        val valTrack = ColorTrack(th, intArrayOf(Color.BLACK, Color.RED))
+        val alphaTrack = ColorTrack(th, intArrayOf(Color.GRAY, Color.RED))
+        val rTrack = ColorTrack(th, intArrayOf(Color.BLACK, Color.RED))
+        val gTrack = ColorTrack(th, intArrayOf(Color.BLACK, Color.GREEN))
+        val bTrack = ColorTrack(th, intArrayOf(Color.BLACK, Color.BLUE))
+
+        val bars = ArrayList<SeekBar>()
+        fun makeBar(maxV: Int, step: Int, track: ColorTrack, onUser: (Int) -> Unit): SeekBar {
+            val b = SeekBar(me)
+            b.max = maxV; b.setKeyProgressIncrement(step)
+            b.progressDrawable = track
+            b.thumbTintList = android.content.res.ColorStateList.valueOf(Color.WHITE)
+            b.background = selectBg(me); b.noSysHighlight()
+            b.setPadding(dp(20), dp(10), dp(20), dp(10))
+            b.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(s: SeekBar?, p: Int, fromUser: Boolean) { if (fromUser) onUser(p) }
+                override fun onStartTrackingTouch(s: SeekBar?) {}
+                override fun onStopTrackingTouch(s: SeekBar?) {}
+            })
+            bars.add(b)
+            return b
+        }
+        // Kéo thanh Đỏ / Xanh lá / Xanh dương: màu mới lấy thẳng từ 3 số này, rồi tính lại Màu sắc / Độ đậm / Độ sáng cho khớp
+        val tmp = FloatArray(3)
+        val rgbChanged = {
+            Color.colorToHSV(color, tmp)
+            hsv[1] = tmp[1]; hsv[2] = tmp[2]
+            if (tmp[1] > 0f && tmp[2] > 0f) hsv[0] = tmp[0]
+            sync()
+        }
+        val hueBar = makeBar(359, 5, hueTrack) { p -> hsv[0] = p.toFloat(); color = Color.HSVToColor(Color.alpha(color), hsv); sync() }
+        val satBar = makeBar(100, 2, satTrack) { p -> hsv[1] = p / 100f; color = Color.HSVToColor(Color.alpha(color), hsv); sync() }
+        val valBar = makeBar(100, 2, valTrack) { p -> hsv[2] = p / 100f; color = Color.HSVToColor(Color.alpha(color), hsv); sync() }
+        val alphaBar = makeBar(215, 8, alphaTrack) { p -> color = Color.argb(p + 40, Color.red(color), Color.green(color), Color.blue(color)); sync() }
+        val rBar = makeBar(255, 8, rTrack) { p -> color = Color.argb(Color.alpha(color), p, Color.green(color), Color.blue(color)); rgbChanged() }
+        val gBar = makeBar(255, 8, gTrack) { p -> color = Color.argb(Color.alpha(color), Color.red(color), p, Color.blue(color)); rgbChanged() }
+        val bBar = makeBar(255, 8, bTrack) { p -> color = Color.argb(Color.alpha(color), Color.red(color), Color.green(color), p); rgbChanged() }
+
+        fun lbl(): TextView = TextView(me).apply { textSize = 16f; setTextColor(Color.WHITE); setPadding(dp(4), dp(8), 0, 0); shade() }
+        val hueLbl = lbl(); val satLbl = lbl(); val valLbl = lbl(); val aLbl = lbl(); val rLbl = lbl(); val gLbl = lbl(); val bLbl = lbl()
+        val preview = TextView(me).apply { textSize = 18f; gravity = Gravity.CENTER; setTextColor(Color.WHITE); shade() }
+        val warn = TextView(me).apply { textSize = 14f; gravity = Gravity.CENTER; setTextColor(0xFFFFD54F.toInt()); shade() }
+
+        // Cập nhật mọi thứ theo màu hiện tại: vị trí các thanh, dải màu trên thanh, chữ số, ô xem trước
+        sync = {
+            val a = Color.alpha(color); val r = Color.red(color); val g = Color.green(color); val b = Color.blue(color)
+            fun put(bar: SeekBar, p: Int) { if (bar.progress != p) bar.progress = p }
+            put(hueBar, Math.round(hsv[0]).coerceIn(0, 359))
+            put(satBar, Math.round(hsv[1] * 100f))
+            put(valBar, Math.round(hsv[2] * 100f))
+            put(alphaBar, a - 40)
+            put(rBar, r); put(gBar, g); put(bBar, b)
+            val hh = hsv[0]
+            satTrack.colors = intArrayOf(Color.HSVToColor(floatArrayOf(hh, 0f, hsv[2])), Color.HSVToColor(floatArrayOf(hh, 1f, hsv[2])))
+            valTrack.colors = intArrayOf(Color.BLACK, Color.HSVToColor(floatArrayOf(hh, hsv[1], 1f)))
+            alphaTrack.colors = intArrayOf(Color.argb(40, r, g, b), Color.rgb(r, g, b))
+            rTrack.colors = intArrayOf(Color.rgb(0, g, b), Color.rgb(255, g, b))
+            gTrack.colors = intArrayOf(Color.rgb(r, 0, b), Color.rgb(r, 255, b))
+            bTrack.colors = intArrayOf(Color.rgb(r, g, 0), Color.rgb(r, g, 255))
+            bars.forEach { it.invalidate() }
+            hueLbl.text = "Màu sắc"
+            satLbl.text = "Độ đậm màu: ${Math.round(hsv[1] * 100f)}%"
+            valLbl.text = "Độ sáng: ${Math.round(hsv[2] * 100f)}%"
+            aLbl.text = "Độ đục: ${a * 100 / 255}%  (thấp = nhìn xuyên được)"
+            rLbl.text = "Đỏ: $r"; gLbl.text = "Xanh lá: $g"; bLbl.text = "Xanh dương: $b"
+            val shown = color
+            preview.text = "Xem trước   #%06X".format(shown and 0xFFFFFF)
+            preview.background = GradientDrawable().apply { setColor(shown); setStroke(dp(2), Color.WHITE) }
+            val bright = (0.299f * r + 0.587f * g + 0.114f * b) / 255f > 0.6f && a >= 200
+            warn.text = if (bright) "Lưu ý: màu khá sáng, chữ trắng có thể khó đọc" else " "
+        }
+        val setAll: (Int) -> Unit = { c ->
+            color = (c and 0xFFFFFF) or (Color.alpha(c).coerceIn(40, 255) shl 24)
+            Color.colorToHSV(color, hsv)
+            sync()
+        }
+
+        val hexBtn = Button(me).apply {
+            text = "Nhập mã màu (#RRGGBB)"; setAllCaps(false)
+            setOnClickListener { hexDialog(color) { c -> setAll(c) } }
+        }
+        val col = LinearLayout(me).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(8), dp(8), dp(8), dp(8)) }
+        col.addView(preview, LinearLayout.LayoutParams(-1, dp(72)))
+        col.addView(warn, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4); bottomMargin = dp(4) })
+        fun section(l: TextView, b: SeekBar) { col.addView(l); col.addView(b, LinearLayout.LayoutParams(-1, -2)) }
+        section(hueLbl, hueBar); section(satLbl, satBar); section(valLbl, valBar); section(aLbl, alphaBar)
+        col.addView(hexBtn, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
+        if (recent.isNotEmpty()) {
+            col.addView(TextView(me).apply { text = "Màu đã lưu gần đây"; textSize = 16f; setTextColor(Color.WHITE); setPadding(dp(4), dp(12), 0, dp(4)); shade() })
+            val rowRecent = LinearLayout(me).apply { orientation = LinearLayout.HORIZONTAL }
+            recent.take(6).forEach { rc ->
+                val sw = TextView(me).apply {
+                    isFocusable = true; isClickable = true
+                    background = swatchBg(rc)
+                    setOnClickListener { setAll(rc) }
+                }
+                rowRecent.addView(sw, LinearLayout.LayoutParams(0, dp(44), 1f).apply { setMargins(dp(4), dp(4), dp(4), dp(4)) })
+            }
+            col.addView(rowRecent, LinearLayout.LayoutParams(-1, -2))
+        }
+        col.addView(TextView(me).apply { text = "Hoặc chỉnh từng màu Đỏ / Xanh lá / Xanh dương"; textSize = 16f; setTextColor(0xFFDDDDDD.toInt()); setPadding(dp(4), dp(16), 0, 0); shade() })
+        section(rLbl, rBar); section(gLbl, gBar); section(bLbl, bBar)
+        sync()
+
+        GlassBuilder(me).setTitle("Tự build màu")
             .setView(ScrollView(me).apply { addView(col) })
             .setPositiveButton("Lưu") { _, _ ->
-                Apps.putInt(me, "panel_color", argb()); Apps.putInt(me, "panel_custom", argb())
-                applyPanel(); build()
-                toast(me, "Đã đổi màu nền bảng: Tuỳ chỉnh")
+                val c = color
+                Apps.putInt(me, zone, c); Apps.putInt(me, customKey, c)
+                Apps.putStr(me, recentKey, (listOf(c) + recent.filter { it != c }).take(6).joinToString(","))
+                zoneChanged(zone)
+                toast(me, "Đã lưu màu tuỳ chỉnh #%06X".format(c and 0xFFFFFF))
             }
             .setNegativeButton("Đóng", null).show()
     }

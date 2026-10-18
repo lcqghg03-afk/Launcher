@@ -233,7 +233,7 @@ fun secAppMenu(c: Context, id: String, a: AppItem, back: () -> Unit) {
     row("Thêm ứng dụng vào mục") { secAddApps(c, id, back) }
     row("Tuỳ chỉnh mục: ${s.name}") { secMenu(c, id, back) }
     row("Ẩn, khoá, gỡ cài đặt ứng dụng…") { showMenu(c, a, back) }
-    GlassBuilder(c).setTitle(a.label).setItems(labels.toTypedArray()) { _, k -> acts[k]() }.show()
+    GlassBuilder(c, ZONE_MENU).setTitle(a.label).setItems(labels.toTypedArray()) { _, k -> acts[k]() }.show()
 }
 
 /** Từ menu của một ứng dụng (màn hình chính / Tất cả ứng dụng): chọn mục để thêm ứng dụng này vào, hoặc tạo mục mới */
