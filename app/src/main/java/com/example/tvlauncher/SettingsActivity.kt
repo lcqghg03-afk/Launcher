@@ -238,6 +238,8 @@ class SettingsActivity : VActivity() {
         item("Hướng dẫn cho TV Xiaomi nội địa", null, false, null, null) { xiaomiHelp() }
         item("Đặt làm giao diện mặc định", homeLabel(), false, null, null) { setDefaultHome() }
         item("Chặn về giao diện gốc của TV", guardLabel(), false, null, { Apps.del(this, "hg_on", "hg_off"); HomeGuard.refresh() }) { guardDialog() }
+        item("Chặn voice gốc của TV (tiếng Trung)", voiceGuardLabel(), false, null, { Apps.del(this, "vg_on", "vg_off"); VoiceGuard.refresh() }) { voiceGuardDialog() }
+        item("Kiểm tra chặn giao diện gốc", null, false, null, null) { guardInfoDialog() }
         item("Độ phân giải màn hình", resLabel(), false, null, { Apps.del(this, "dispmode"); applyDisplayMode(this) }) { resolutionDialog() }
         choice("Kích cỡ TV", "tvsize", TV_SIZES, 0, true)
         choice("Tinh chỉnh độ lớn giao diện", "tvfine", FINE_LABELS, 2, true)
@@ -557,6 +559,64 @@ class SettingsActivity : VActivity() {
         b.show()
     }
 
+    /** Đang chặn những gì (để báo kết quả): giao diện gốc và/hoặc voice gốc */
+    private fun guardWhat(): String = listOfNotNull(
+        "giao diện gốc".takeIf { Apps.bool(this, "hg_on", false) },
+        "voice gốc".takeIf { VoiceGuard.on(this) }
+    ).joinToString(" và ")
+
+    /** Trạng thái hiện ở cuối dòng "Chặn voice gốc của TV" */
+    private fun voiceGuardLabel(): String {
+        if (!VoiceGuard.on(this)) return "Tắt"
+        if (!HomeGuard.serviceEnabled(this)) return "Đã bật, chờ cấp quyền trợ năng"
+        val rep = VoiceGuard.replacement(this)
+        val name = rep?.let { p -> Apps.loadAll(this).firstOrNull { it.pkg == p }?.label ?: p }
+        return "Đang chặn  •  micro mở " + (name ?: "Google Assistant")
+    }
+
+    /** Chọn trợ lý giọng nói gốc cần chặn (tích = chặn). Nút micro trên điều khiển sẽ mở trợ lý đã chọn ở mục "Trợ lý giọng nói" (hoặc Kiki / Google Assistant) */
+    private fun voiceGuardDialog() {
+        val apps = VoiceGuard.assistants(this)
+        val on = VoiceGuard.on(this)
+        val off = VoiceGuard.excluded(this)
+        val checked = BooleanArray(apps.size) { apps[it].first !in off }
+        val b = AlertDialog.Builder(this).setTitle("Chặn voice gốc (tích = chặn)")
+        if (apps.isEmpty()) b.setMessage("Không thấy trợ lý giọng nói gốc nào trong danh sách ứng dụng. Vẫn có thể bật để nút micro trên điều khiển luôn mở trợ lý thay thế " +
+            "(chọn ở mục \"Trợ lý giọng nói\", hoặc Kiki / Google Assistant nếu có).")
+        else b.setMultiChoiceItems(apps.map { it.second + "  (" + it.first + ")" }.toTypedArray(), checked) { _, i, v -> checked[i] = v }
+        b.setPositiveButton(if (on) "Lưu" else "Bật chặn") { _, _ ->
+            if (apps.isNotEmpty() && checked.none { it }) { toast(this, "Chưa tích trợ lý nào để chặn"); return@setPositiveButton }
+            Apps.putStr(this, "vg_off", apps.filterIndexed { i, _ -> !checked[i] }.joinToString(",") { it.first })
+            Apps.putBool(this, "vg_on", true); VoiceGuard.refresh()
+            HomeGuard.enableService(this)
+            build()
+            verifyGuard()
+        }.setNegativeButton("Đóng", null)
+        if (on) b.setNeutralButton("Tắt chặn") { _, _ -> Apps.putBool(this, "vg_on", false); VoiceGuard.refresh(); build(); toast(this, "Đã tắt chặn voice gốc") }
+        b.show()
+    }
+
+    /** Màn hình kiểm tra: trạng thái dịch vụ, quyền, danh sách đang chặn và các sự kiện gần nhất (chụp màn hình này gửi đi nếu chặn chưa hiệu quả) */
+    private fun guardInfoDialog() {
+        val overlay = if (Build.VERSION.SDK_INT >= 23) Settings.canDrawOverlays(this) else true
+        val blocked = HomeGuard.homeApps(this).filter { it.first !in HomeGuard.excluded(this) }
+        val notes = HomeGuard.notes().ifEmpty { listOf("(chưa có) Hãy bấm Home / nút micro trên điều khiển, mở lại TV Launcher rồi vào đây xem") }
+        val msg = "• Chặn: " + (if (Apps.bool(this, "hg_on", false)) "bật" else "tắt") +
+            "\n• Dịch vụ trợ năng: " + (if (HomeGuard.running()) "đang chạy" else if (HomeGuard.serviceEnabled(this)) "đã bật nhưng chưa chạy" else "chưa bật") +
+            "\n• Quyền ghi cài đặt bảo mật (ADB): " + (if (HomeGuard.canWriteSecure(this)) "đã cấp" else "chưa cấp") +
+            "\n• Quyền hiển thị trên ứng dụng khác: " + (if (overlay) "đã cấp" else "chưa cấp") +
+            "\n• Giao diện mặc định hiện tại: " + (defaultHomePkg(this) ?: "không rõ") +
+            "\n• Đang chặn: " + (if (blocked.isEmpty()) "không có" else blocked.joinToString(", ") { it.second + " (" + it.first + ")" }) +
+            "\n• Chặn voice gốc: " + (if (VoiceGuard.on(this)) "bật" else "tắt") +
+            "\n• Voice đang chặn: " + (VoiceGuard.assistants(this).filter { it.first !in VoiceGuard.excluded(this) }.let { l -> if (l.isEmpty()) "không có" else l.joinToString(", ") { it.second + " (" + it.first + ")" } }) +
+            "\n• Số lần bắt nút Home: ${HomeGuard.homeKeys}" +
+            "\n\nSự kiện gần nhất (mới nhất ở trên):\n" + notes.joinToString("\n")
+        AlertDialog.Builder(this).setTitle("Kiểm tra chặn giao diện gốc").setMessage(msg)
+            .setPositiveButton("Đóng", null)
+            .setNeutralButton("Làm mới") { _, _ -> guardInfoDialog() }
+            .show()
+    }
+
     private fun guardEnableDialog() {
         val comp = "$packageName/${HomeGuardService::class.java.name}"
         AlertDialog.Builder(this).setTitle("Bật dịch vụ trợ năng để chặn")
@@ -579,7 +639,12 @@ class SettingsActivity : VActivity() {
     /** Báo kết quả bật chặn: thành công khi dịch vụ trợ năng đã chạy thật. Nếu dịch vụ đã được ghi vào cài đặt mà hệ thống chưa kết nối thì đợi tối đa ~3 giây */
     private fun verifyGuard(tries: Int = 6) {
         if (isFinishing) return
-        if (HomeGuard.running()) { build(); toast(this, "Thành công: đang chặn về giao diện gốc của TV"); return }
+        if (HomeGuard.running()) {
+            build()
+            val w = guardWhat()
+            toast(this, "Thành công: " + (if (w.isEmpty()) "dịch vụ chặn đã chạy" else "đang chặn $w của TV"))
+            return
+        }
         if (tries > 0 && HomeGuard.serviceEnabled(this)) {
             Handler(Looper.getMainLooper()).postDelayed({ verifyGuard(tries - 1) }, 500)
             return
@@ -716,7 +781,7 @@ class SettingsActivity : VActivity() {
     private fun permissionDialog() {
         val overlay = if (Build.VERSION.SDK_INT >= 23) Settings.canDrawOverlays(this) else true
         val b = AlertDialog.Builder(this).setTitle("Quyền ứng dụng")
-            .setMessage("• Truy cập Internet (thời tiết, gửi mã Gmail)\n• Xem danh sách ứng dụng đã cài\n• Gỡ cài đặt ứng dụng\n• Khởi động cùng thiết bị\n• Dịch vụ trợ năng (chỉ khi bật \"Chặn về giao diện gốc\")\n• Đọc bộ nhớ/USB (khi chọn ảnh, video nền)\n• Hiển thị trên ứng dụng khác (giúp tự khởi động ổn định): " +
+            .setMessage("• Truy cập Internet (thời tiết, gửi mã Gmail)\n• Xem danh sách ứng dụng đã cài\n• Gỡ cài đặt ứng dụng\n• Khởi động cùng thiết bị\n• Dịch vụ trợ năng (chỉ khi bật \"Chặn về giao diện gốc\" hoặc \"Chặn voice gốc\")\n• Đọc bộ nhớ/USB (khi chọn ảnh, video nền)\n• Hiển thị trên ứng dụng khác (giúp tự khởi động ổn định): " +
                 (if (overlay) "đã cấp" else "chưa cấp") +
                 "\n• Ghi cài đặt bảo mật (tự bật dịch vụ trợ năng, chỉ cấp được bằng ADB): " + (if (HomeGuard.canWriteSecure(this)) "đã cấp" else "chưa cấp"))
             .setNeutralButton("Cài đặt quyền") { _, _ ->

@@ -1166,14 +1166,9 @@ class MainActivity : VActivity() {
         } catch (e: Exception) { runOnUiThread { weather.text = "Không tải được thời tiết" } }
     }
 
-    // Giọng nói: ưu tiên app đã chọn trong Cài đặt, rồi Kiki (nhận theo tên), rồi Google Assistant của hệ thống
+    // Giọng nói: ưu tiên app đã chọn trong Cài đặt, rồi Kiki (nhận theo tên), rồi Google Assistant (logic dùng chung với nút micro trên điều khiển ở VoiceGuard)
     private fun voice() {
-        val all = Apps.loadAll(this)
-        val chosen = Apps.str(this, "voice_pkg")
-        val pkg = chosen?.takeIf { p -> all.any { it.pkg == p } } ?: all.firstOrNull { it.label.contains("kiki", true) }?.pkg
-            ?: all.firstOrNull { it.label.contains("小爱") || it.label.contains("xiaoai", true) || it.label.contains("xiao ai", true) }?.pkg
-        if (pkg != null) { Apps.open(this, pkg); return }
-        if (safeStart(this, Intent("android.intent.action.VOICE_ASSIST"), Intent(Intent.ACTION_VOICE_COMMAND), Intent(Intent.ACTION_ASSIST), Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH))) return
+        if (VoiceGuard.launch(this)) return
         Toast.makeText(this, "Chưa có trợ lý giọng nói. Hãy cài Kiki, hoặc chọn trợ lý trong Cài đặt Home TV", Toast.LENGTH_LONG).show()
     }
 
