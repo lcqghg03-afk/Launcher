@@ -32,7 +32,9 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
-        <activity android:name=".AllAppsActivity" android:exported="false" android:screenOrientation="landscape"/>
+        <!-- Trong suốt như màn hình Cài đặt. Không đặt screenOrientation vì Android 8.0 báo lỗi khi activity trong suốt đòi khoá hướng màn hình -->
+        <activity android:name=".AllAppsActivity" android:exported="false"
+            android:theme="@style/SettingsGlass"/>
         <activity android:name=".SettingsActivity" android:exported="false"
             android:theme="@style/SettingsGlass"/>
         <receiver android:name=".BootReceiver" android:exported="true">
