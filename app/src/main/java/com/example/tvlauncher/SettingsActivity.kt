@@ -166,7 +166,7 @@ class SettingsActivity : VActivity() {
         item("Độ phân giải màn hình", "${dm.widthPixels}x${dm.heightPixels}", false, null, null) { toast(this, "Đây là độ phân giải TV đang xuất ra. Nếu chữ quá to hoặc quá nhỏ, hãy chọn Kích cỡ TV bên dưới.") }
         choice("Kích cỡ TV", "tvsize", TV_SIZES, 0, true)
         choice("Tinh chỉnh độ lớn giao diện", "tvfine", FINE_LABELS, 2, true)
-        item("Chỉnh sửa kênh", TvApps.shownApps(this).size.let { if (it == 0) "Chưa bật" else "Đang hiện $it" }, false, null, { Apps.del(this, "tv_show") }) { tvChannelsDialog() }
+        item("Kênh trên màn hình chính", TvChannels.selected(this).size.let { if (it == 0) "Chưa chọn" else "Đang hiện $it" }, false, null, { Apps.del(this, "tvc_show") }) { tvChannelsDialog() }
         item("Chuyển đầu vào (HDMI/AV)", null, false, null, null) { pickInput(this) }
         item("Cài đặt hệ thống", null, false, null, null) { openSystemSettings(this) }
         val vp = Apps.str(this, "voice_pkg")
@@ -186,7 +186,7 @@ class SettingsActivity : VActivity() {
         toggle("Hiển thị lịch âm", "lunar", true)
         item("Hiển thị tiện ích thời tiết", null, false, !Apps.isHidden(this, "@weather"), { Apps.setHidden(this, "@weather", false) }) {
             Apps.setHidden(this, "@weather", !Apps.isHidden(this, "@weather")); build() }
-        item("Hiển thị hàng Truyền hình", null, false, !Apps.isHidden(this, "@tv"), { Apps.setHidden(this, "@tv", false) }) {
+        item("Hiển thị kênh trên màn hình chính", null, false, !Apps.isHidden(this, "@tv"), { Apps.setHidden(this, "@tv", false) }) {
             Apps.setHidden(this, "@tv", !Apps.isHidden(this, "@tv")); build() }
         item("Hiển thị hàng Yêu thích", null, false, !Apps.isHidden(this, "@favs"), { Apps.setHidden(this, "@favs", false) }) {
             Apps.setHidden(this, "@favs", !Apps.isHidden(this, "@favs")); build() }
@@ -242,31 +242,43 @@ class SettingsActivity : VActivity() {
         item(title, null, false, Apps.bool(this, key, def), { Apps.del(this, key) }) { Apps.putBool(this, key, !Apps.bool(this, key, def)); build() }
     }
 
-    // Chỉnh sửa kênh: liệt kê các ứng dụng có thể đưa kênh lên màn hình chính, mỗi ứng dụng có nút Hiện / Ẩn.
-    // Mặc định tất cả đều ẩn, nên hàng Truyền hình ở màn hình chính trống cho tới khi bạn bật
+    // Kênh trên màn hình chính: chọn kênh thật do các ứng dụng xem TV đăng lên hệ thống để hiện ở màn hình chính
     private fun tvChannelsDialog() {
-        val sup = TvApps.supported(this)
-        if (sup.isEmpty()) {
-            AlertDialog.Builder(this).setTitle("Chỉnh sửa kênh")
-                .setMessage("Chưa thấy ứng dụng nào hỗ trợ đưa kênh lên màn hình chính. Hãy cài ứng dụng xem TV có hỗ trợ tính năng này rồi quay lại mục này.")
+        if (!TvChannels.supported()) {
+            AlertDialog.Builder(this).setTitle("Kênh trên màn hình chính")
+                .setMessage("TV này chạy Android ${Build.VERSION.RELEASE}. Tính năng này cần Android 8.0 trở lên.")
                 .setPositiveButton("Đóng", null).show()
             return
         }
-        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(24), dp(8), dp(24), 0) }
-        sup.forEach { a ->
-            val btn = Button(this)
-            val refresh = { btn.text = if (TvApps.isShown(this, a.pkg)) "Đang hiện · bấm để ẩn" else "Đang ẩn · bấm để hiện" }
-            refresh()
-            btn.setOnClickListener { TvApps.setShown(this, a.pkg, !TvApps.isShown(this, a.pkg)); refresh() }
-            col.addView(LinearLayout(this).apply {
-                gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(6), 0, dp(6))
-                addView(ImageView(this@SettingsActivity).apply { setImageDrawable(a.icon) }, LinearLayout.LayoutParams(dp(40), dp(40)))
-                addView(TextView(this@SettingsActivity).apply { text = a.label; textSize = 18f; setPadding(dp(12), 0, dp(12), 0) }, LinearLayout.LayoutParams(0, -2, 1f))
-                addView(btn)
-            })
+        if (!TvChannels.granted(this)) { requestPermissions(arrayOf(TvChannels.PERM), 78); return }
+        toast(this, "Đang tìm kênh...")
+        thread {
+            val chs = TvChannels.channels(this)
+            runOnUiThread { if (!isFinishing) tvChannelsPick(chs) }
         }
-        AlertDialog.Builder(this).setTitle("Chỉnh sửa kênh (${sup.size} ứng dụng)").setView(ScrollView(this).apply { addView(col) })
+    }
+
+    private fun tvChannelsPick(chs: List<TvChannels.Ch>) {
+        if (chs.isEmpty()) {
+            AlertDialog.Builder(this).setTitle("Kênh trên màn hình chính")
+                .setMessage("Chưa thấy ứng dụng nào đăng kênh lên màn hình chính. Hãy mở ứng dụng xem TV (VTV Go, FPT Play, YouTube...) một lần để ứng dụng tạo kênh, rồi quay lại mục này.\n\n" +
+                    "Nếu vẫn trống thì TV này không chia sẻ kênh của ứng dụng cho launcher khác.")
+                .setPositiveButton("Đóng", null).show()
+            return
+        }
+        val sel = TvChannels.selected(this).toSet()
+        val checked = BooleanArray(chs.size) { chs[it].id in sel }
+        AlertDialog.Builder(this).setTitle("Chọn kênh hiện ở màn hình chính (${chs.size})")
+            .setMultiChoiceItems(chs.map { it.label }.toTypedArray(), checked) { _, i, v -> checked[i] = v }
+            .setPositiveButton("Lưu") { _, _ -> TvChannels.setSelected(this, chs.filterIndexed { i, _ -> checked[i] }.map { it.id }); toast(this, "Đã lưu") }
             .setNegativeButton("Đóng", null).setOnDismissListener { build() }.show()
+    }
+
+    private fun tvPermHelp() {
+        AlertDialog.Builder(this).setTitle("Cần cấp quyền đọc kênh")
+            .setMessage("TV chưa cấp quyền đọc danh sách kênh cho TV Launcher. Nếu TV không hiện hộp thoại xin quyền, hãy cấp bằng máy tính qua adb:\n\n" +
+                "adb shell pm grant $packageName ${TvChannels.PERM}\n\nCấp xong quay lại mục này để chọn kênh.")
+            .setPositiveButton("Đóng", null).show()
     }
 
     // Danh sách tất cả ứng dụng đã ẩn: tích chọn từng ứng dụng để bỏ ẩn, hoặc bỏ ẩn tất cả
@@ -363,6 +375,7 @@ class SettingsActivity : VActivity() {
     }
 
     override fun onRequestPermissionsResult(rc: Int, p: Array<out String>, r: IntArray) {
+        if (rc == 78) { if (r.isNotEmpty() && r[0] == PackageManager.PERMISSION_GRANTED) tvChannelsDialog() else tvPermHelp(); return }
         if (rc == 77) { if (r.isNotEmpty() && r[0] == PackageManager.PERMISSION_GRANTED) showDir(null, pendingVideo) else toast(this, "Cần cấp quyền đọc bộ nhớ để chọn tệp") }
     }
 
