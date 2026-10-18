@@ -4,6 +4,7 @@ import android.accessibilityservice.AccessibilityService
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.SystemClock
 import android.provider.Settings
 import android.view.accessibility.AccessibilityEvent
@@ -45,6 +46,30 @@ object HomeGuard {
         return cache
     }
 
+    /** Đã được cấp quyền WRITE_SECURE_SETTINGS chưa (chỉ cấp được bằng ADB, làm một lần: adb shell pm grant <gói> android.permission.WRITE_SECURE_SETTINGS) */
+    fun canWriteSecure(c: Context): Boolean = try {
+        c.packageManager.checkPermission("android.permission.WRITE_SECURE_SETTINGS", c.packageName) == PackageManager.PERMISSION_GRANTED
+    } catch (e: Exception) { false }
+
+    /** Tự bật dịch vụ trợ năng, giữ nguyên các dịch vụ khác đang bật. Cần quyền WRITE_SECURE_SETTINGS. Trả về true nếu dịch vụ đã bật */
+    fun enableService(c: Context): Boolean {
+        if (serviceEnabled(c)) return true
+        if (!canWriteSecure(c)) return false
+        return try {
+            val me = ComponentName(c, HomeGuardService::class.java).flattenToString()
+            val cur = Settings.Secure.getString(c.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: ""
+            val merged = (cur.split(":").filter { it.isNotEmpty() } + me).distinct().joinToString(":")
+            Settings.Secure.putString(c.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES, merged)
+            Settings.Secure.putInt(c.contentResolver, Settings.Secure.ACCESSIBILITY_ENABLED, 1)
+            serviceEnabled(c)
+        } catch (e: Exception) { false }
+    }
+
+    /** Đang bật chặn mà dịch vụ trợ năng bị tắt (TV Xiaomi hay tự tắt) thì tự bật lại, nếu đã có quyền */
+    fun ensure(c: Context) {
+        if (Apps.bool(c, "hg_on", false) && !serviceEnabled(c)) enableService(c)
+    }
+
     /** Dịch vụ trợ năng của TV Launcher đã được bật trong cài đặt hệ thống chưa */
     fun serviceEnabled(c: Context): Boolean = try {
         val s = Settings.Secure.getString(c.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: ""
@@ -76,4 +101,3 @@ class HomeGuardService : AccessibilityService() {
 
     override fun onInterrupt() {}
 }
-

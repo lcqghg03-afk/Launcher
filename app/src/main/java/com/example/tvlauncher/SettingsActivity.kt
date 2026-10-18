@@ -154,6 +154,7 @@ fun bootInputs(c: Context): List<Pair<String, String>> = try {
 
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(c: Context, i: Intent) {
+        HomeGuard.ensure(c)
         val src = bootSrc(c)
         val self = Intent(c, MainActivity::class.java)
         when {
@@ -229,8 +230,7 @@ class SettingsActivity : VActivity() {
         item("Hướng dẫn cho TV Xiaomi nội địa", null, false, null, null) { xiaomiHelp() }
         item("Đặt làm giao diện mặc định", homeLabel(), false, null, null) { setDefaultHome() }
         item("Chặn về giao diện gốc của TV", guardLabel(), false, null, { Apps.del(this, "hg_on", "hg_off"); HomeGuard.refresh() }) { guardDialog() }
-        val dm = android.util.DisplayMetrics(); windowManager.defaultDisplay.getRealMetrics(dm)
-        item("Độ phân giải màn hình", "${dm.widthPixels}x${dm.heightPixels}", false, null, null) { toast(this, "Đây là độ phân giải TV đang xuất ra. Nếu chữ quá to hoặc quá nhỏ, hãy chọn Kích cỡ TV bên dưới.") }
+        item("Độ phân giải màn hình", resLabel(), false, null, { Apps.del(this, "dispmode"); applyDisplayMode(this) }) { resolutionDialog() }
         choice("Kích cỡ TV", "tvsize", TV_SIZES, 0, true)
         choice("Tinh chỉnh độ lớn giao diện", "tvfine", FINE_LABELS, 2, true)
         item("Mục trên màn hình chính", Secs.load(this).size.let { if (it == 0) "Chưa có" else "$it mục" }, false, null, null) { secListDialog(this) { build() } }
@@ -285,6 +285,57 @@ class SettingsActivity : VActivity() {
             scroll.scrollTo(0, keepY)
             if (keepIdx >= 0) list.getChildAt(keepIdx)?.requestFocus()
         }
+    }
+
+    // Giá trị hiển thị ở dòng "Độ phân giải màn hình": độ phân giải giao diện, kèm độ phân giải TV đang xuất ra nếu khác nhau (vd TV 4K vẽ giao diện Full HD)
+    @Suppress("DEPRECATION")
+    private fun resLabel(): String {
+        val dm = android.util.DisplayMetrics(); windowManager.defaultDisplay.getRealMetrics(dm)
+        var s = "${dm.widthPixels}x${dm.heightPixels}"
+        if (Build.VERSION.SDK_INT >= 23) try {
+            val m = windowManager.defaultDisplay.mode
+            if (m.physicalWidth != dm.widthPixels || m.physicalHeight != dm.heightPixels) s += " (TV xuất ${m.physicalWidth}x${m.physicalHeight})"
+        } catch (e: Exception) {}
+        if (Apps.str(this, "dispmode") != null) s += "  •  đã chọn"
+        return s
+    }
+
+    // Chọn chế độ xuất hình (độ phân giải + tần số quét) trong số các chế độ TV báo cho ứng dụng
+    private fun resolutionDialog() {
+        val modes = displayModes(this)
+        val cur = Apps.str(this, "dispmode")
+        val labels = ArrayList<String>()
+        labels.add("Tự động (theo TV)")
+        modes.forEach { labels.add(it.label) }
+        labels.add("Vì sao TV 4K chỉ hiện Full HD?")
+        val checked = if (cur == null) 0 else modes.indexOfFirst { it.key == cur }.let { if (it < 0) 0 else it + 1 }
+        AlertDialog.Builder(this).setTitle("Độ phân giải màn hình")
+            .setSingleChoiceItems(labels.toTypedArray(), checked) { d, i ->
+                d.dismiss()
+                when {
+                    i == 0 -> { Apps.del(this, "dispmode"); applyDisplayMode(this); toast(this, "Đã về Tự động (theo TV)"); build() }
+                    i <= modes.size -> {
+                        Apps.putStr(this, "dispmode", modes[i - 1].key); applyDisplayMode(this); build()
+                        toast(this, "Đã xin TV chuyển sang ${modes[i - 1].label.replace("  ", " ")} khi ở TV Launcher. TV không hỗ trợ thì giữ nguyên.")
+                    }
+                    else -> resolutionHelp()
+                }
+            }.show()
+    }
+
+    private fun resolutionHelp() {
+        AlertDialog.Builder(this).setTitle("Vì sao TV 4K chỉ hiện Full HD?").setMessage(
+            "Nhiều TV Android (Xiaomi, TCL, Sony...) vẽ giao diện ở Full HD 1920x1080 rồi tự phóng lên 4K khi hiển thị, nên ứng dụng chỉ đọc được 1920x1080. " +
+            "Đây không phải lỗi của TV Launcher. Phim/video 4K trong YouTube, Netflix... vẫn phát đúng 4K.\n\n" +
+            "Ứng dụng không tự đổi được độ phân giải giao diện của hệ thống. Các chế độ trong danh sách là chế độ TV báo cho ứng dụng; " +
+            "chọn một chế độ chỉ là xin TV đổi khi đang ở TV Launcher. Nếu danh sách chỉ có một dòng nghĩa là TV không cho đổi.\n\n" +
+            "Muốn ép giao diện hệ thống lên 4K (có thể làm TV giật, lag), dùng ADB:\n" +
+            "1) adb shell wm density   (xem số hiện tại, ví dụ 240)\n" +
+            "2) adb shell wm size 3840x2160\n" +
+            "3) adb shell wm density 480   (gấp đôi số ở bước 1)\n" +
+            "Khôi phục: adb shell wm size reset  và  adb shell wm density reset\n" +
+            "Sau đó chỉnh Kích cỡ TV / Tinh chỉnh độ lớn cho vừa mắt."
+        ).setPositiveButton("Đóng", null).show()
     }
 
     private fun item(title: String, value: String?, red: Boolean, checked: Boolean?, reset: (() -> Unit)?, click: () -> Unit) {
@@ -477,8 +528,9 @@ class SettingsActivity : VActivity() {
                 if (checked.none { it }) { toast(this, "Chưa tích giao diện nào để chặn"); return@setPositiveButton }
                 Apps.putStr(this, "hg_off", apps.filterIndexed { i, _ -> !checked[i] }.joinToString(",") { it.first })
                 Apps.putBool(this, "hg_on", true); HomeGuard.refresh()
+                val ok = HomeGuard.enableService(this)
                 build()
-                if (HomeGuard.serviceEnabled(this)) toast(this, "Đã bật chặn") else guardEnableDialog()
+                if (ok) toast(this, "Đã bật chặn") else guardEnableDialog()
             }
             .setNegativeButton("Đóng", null)
         if (on) b.setNeutralButton("Tắt chặn") { _, _ -> Apps.putBool(this, "hg_on", false); HomeGuard.refresh(); build() }
@@ -491,15 +543,32 @@ class SettingsActivity : VActivity() {
             .setMessage(
                 "Android không cho ứng dụng tự chặn giao diện khác, nên cần bật dịch vụ trợ năng \"TV Launcher - Chặn giao diện gốc\". " +
                 "Dịch vụ chỉ biết giao diện nào đang hiện lên để đưa về TV Launcher, không đọc nội dung màn hình.\n\n" +
-                "Bấm \"Mở cài đặt trợ năng\", chọn dịch vụ trên rồi bật.\n\n" +
-                "Nếu TV không có màn hình trợ năng, dùng ADB trên máy tính (lệnh này ghi đè các dịch vụ trợ năng khác đang bật):\n" +
+                "CÁCH 1 (TV không có màn hình trợ năng): cấp quyền một lần bằng ADB trên máy tính, sau đó bấm \"Thử bật lại\". " +
+                "TV Launcher sẽ tự bật dịch vụ và tự bật lại mỗi khi khởi động, không đụng tới dịch vụ trợ năng khác:\n" +
+                "adb shell pm grant $packageName android.permission.WRITE_SECURE_SETTINGS\n\n" +
+                "CÁCH 2: bấm \"Mở cài đặt trợ năng\", chọn dịch vụ trên rồi bật.\n\n" +
+                "CÁCH 3: ADB (lệnh này ghi đè các dịch vụ trợ năng khác đang bật):\n" +
                 "adb shell settings put secure enabled_accessibility_services $comp\n" +
                 "adb shell settings put secure accessibility_enabled 1\n\n" +
                 "Nên cấp thêm quyền \"Hiển thị trên ứng dụng khác\" (mục Quyền ứng dụng) để việc chuyển về TV Launcher ổn định.")
-            .setPositiveButton("Mở cài đặt trợ năng") { _, _ ->
-                refreshOnBack = true
-                if (!safeStart(this, Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))) toast(this, "TV không có màn hình trợ năng") }
+            .setPositiveButton("Mở cài đặt trợ năng") { _, _ -> refreshOnBack = true; openAccessibilitySettings() }
+            .setNeutralButton("Thử bật lại") { _, _ ->
+                if (HomeGuard.enableService(this)) toast(this, "Đã bật chặn")
+                else toast(this, if (HomeGuard.canWriteSecure(this)) "Chưa bật được, thử lại sau" else "Chưa cấp quyền WRITE_SECURE_SETTINGS bằng ADB")
+                build() }
             .setNegativeButton("Đóng", null).show()
+    }
+
+    // Mở màn hình trợ năng: thử lối chuẩn trước, rồi vài màn hình của trình cài đặt TV/Android (TV Xiaomi nội địa thường đã bỏ màn hình này)
+    private fun openAccessibilitySettings() {
+        val tries = listOf(
+            Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS),
+            Intent().setClassName("com.android.tv.settings", "com.android.tv.settings.accessibility.AccessibilityActivity"),
+            Intent().setClassName("com.android.settings", "com.android.settings.accessibility.AccessibilitySettings"),
+            Intent().setClassName("com.android.settings", "com.android.settings.Settings\$AccessibilitySettingsActivity")
+        )
+        for (i in tries) if (safeStart(this, i)) return
+        toast(this, "TV không có màn hình trợ năng. Dùng cách 1 (ADB) trong hướng dẫn.")
     }
 
     /** Trạng thái hiện ở cuối dòng "Đặt làm giao diện mặc định" */
@@ -580,8 +649,7 @@ class SettingsActivity : VActivity() {
         val l = enabledServices()
         AlertDialog.Builder(this).setTitle("Dịch vụ trợ năng")
             .setMessage(if (l.isEmpty()) "Chưa bật dịch vụ trợ năng nào." else "Đang bật:\n" + l.joinToString("\n") { "• $it" })
-            .setPositiveButton("Mở cài đặt trợ năng") { _, _ ->
-                if (!safeStart(this, Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))) toast(this, "TV không có màn hình trợ năng") }
+            .setPositiveButton("Mở cài đặt trợ năng") { _, _ -> openAccessibilitySettings() }
             .setNegativeButton("Đóng", null).show()
     }
 
@@ -589,7 +657,8 @@ class SettingsActivity : VActivity() {
         val overlay = if (Build.VERSION.SDK_INT >= 23) Settings.canDrawOverlays(this) else true
         val b = AlertDialog.Builder(this).setTitle("Quyền ứng dụng")
             .setMessage("• Truy cập Internet (thời tiết, gửi mã Gmail)\n• Xem danh sách ứng dụng đã cài\n• Gỡ cài đặt ứng dụng\n• Khởi động cùng thiết bị\n• Dịch vụ trợ năng (chỉ khi bật \"Chặn về giao diện gốc\")\n• Đọc bộ nhớ/USB (khi chọn ảnh, video nền)\n• Hiển thị trên ứng dụng khác (giúp tự khởi động ổn định): " +
-                (if (overlay) "đã cấp" else "chưa cấp"))
+                (if (overlay) "đã cấp" else "chưa cấp") +
+                "\n• Ghi cài đặt bảo mật (tự bật dịch vụ trợ năng, chỉ cấp được bằng ADB): " + (if (HomeGuard.canWriteSecure(this)) "đã cấp" else "chưa cấp"))
             .setNeutralButton("Cài đặt quyền") { _, _ ->
                 try { startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))) } catch (e: Exception) { toast(this, "TV không mở được màn hình này") } }
             .setNegativeButton("Đóng", null)

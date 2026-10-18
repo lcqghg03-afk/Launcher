@@ -133,8 +133,47 @@ fun viCtx(b: Context): Context {
     return b.createConfigurationContext(cfg)
 }
 
+
+// ===== Độ phân giải / chế độ xuất hình của TV =====
+// Ứng dụng chỉ đọc được các chế độ mà TV báo (Display.supportedModes) và xin TV đổi chế độ khi TV Launcher đang ở phía trước.
+// Không tự đổi được độ phân giải giao diện của hệ thống (nhiều TV 4K vẽ giao diện ở 1920x1080 rồi phóng lên 4K).
+class DispMode(val key: String, val label: String, val w: Int, val h: Int, val id: Int)
+
+private fun resName(w: Int, h: Int): String = when {
+    w >= 7680 -> "8K"
+    w >= 3840 -> "4K"
+    w >= 2560 -> "2K"
+    w >= 1920 -> "Full HD"
+    w >= 1280 -> "HD"
+    else -> "SD"
+}
+
+@Suppress("DEPRECATION")
+fun displayModes(a: Activity): List<DispMode> {
+    if (Build.VERSION.SDK_INT < 23) return emptyList()
+    return try {
+        a.windowManager.defaultDisplay.supportedModes.map { m ->
+            val w = m.physicalWidth; val h = m.physicalHeight; val r = m.refreshRate
+            val hz = if (Math.abs(r - Math.round(r)) < 0.05f) "${Math.round(r)}Hz" else String.format(Locale.US, "%.2fHz", r)
+            DispMode(String.format(Locale.US, "%dx%d@%.2f", w, h, r), "${resName(w, h)}  ${w}x${h}  •  $hz", w, h, m.modeId)
+        }.distinctBy { it.key }.sortedWith(compareByDescending<DispMode> { it.w * it.h }.thenByDescending { it.key })
+    } catch (e: Exception) { emptyList() }
+}
+
+/** Áp dụng chế độ xuất hình đã chọn trong Cài đặt cho cửa sổ hiện tại (không chọn / TV không có chế độ đó = để TV tự quyết) */
+fun applyDisplayMode(a: Activity) {
+    if (Build.VERSION.SDK_INT < 23) return
+    try {
+        val key = Apps.str(a, "dispmode")
+        val id = if (key == null) 0 else displayModes(a).firstOrNull { it.key == key }?.id ?: 0
+        val lp = a.window.attributes
+        if (lp.preferredDisplayModeId != id) { lp.preferredDisplayModeId = id; a.window.attributes = lp }
+    } catch (e: Exception) {}
+}
+
 open class VActivity : Activity() {
     override fun attachBaseContext(b: Context) { super.attachBaseContext(viCtx(b)) }
+    override fun onResume() { super.onResume(); applyDisplayMode(this); HomeGuard.ensure(this) }
 }
 
 // Gói ứng dụng xem TV/nguồn tín hiệu của Xiaomi (thử lần lượt, gói nào có trên TV thì dùng)
