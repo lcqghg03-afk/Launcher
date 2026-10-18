@@ -271,6 +271,19 @@ fun focusBg(c: Context): StateListDrawable = StateListDrawable().apply {
     addState(intArrayOf(), GradientDrawable().apply { setColor(0) })
 }
 
+/** Khung vuông trắng bao quanh mục đang được chọn, nền bên trong gần như trong suốt.
+ *  Dùng chung cho màn hình Cài đặt và lưới Tất cả ứng dụng */
+fun selectBox(c: Context): GradientDrawable = GradientDrawable().apply { setColor(0x22FFFFFF); setStroke(c.dp(3), Color.WHITE) }
+
+/** Nền cho một dòng/ô: được chọn thì hiện khung vuông trắng, không được chọn thì trong suốt hoàn toàn */
+fun selectBg(c: Context): StateListDrawable = StateListDrawable().apply {
+    addState(intArrayOf(android.R.attr.state_focused), selectBox(c))
+    addState(intArrayOf(), GradientDrawable().apply { setColor(0); setStroke(c.dp(3), 0) })
+}
+
+/** Đổ bóng nhẹ cho chữ để vẫn đọc được khi nền phía sau trong suốt (ảnh nền sáng) */
+fun <T : TextView> T.shade(): T { setShadowLayer(8f, 0f, 2f, 0xDD000000.toInt()); return this }
+
 fun chipBg(c: Context): StateListDrawable = StateListDrawable().apply {
     addState(intArrayOf(android.R.attr.state_focused), GradientDrawable().apply { cornerRadius = c.dp(16).toFloat(); setColor(0x66FFFFFF); setStroke(c.dp(2), Color.WHITE) })
     addState(intArrayOf(), GradientDrawable().apply { cornerRadius = c.dp(16).toFloat(); setColor(0x44000000); setStroke(c.dp(1), 0x88FFFFFF.toInt()) })
@@ -289,6 +302,18 @@ fun wmo(code: Int) = when (code) {
 }
 
 data class AppItem(val label: String, val pkg: String, val icon: Drawable)
+
+/** Khoá sắp xếp abc cho tiếng Việt: bỏ dấu (à, ạ, ê, ơ, ư...), Đ/đ coi như D, không phân biệt hoa thường.
+ *  Nếu so theo mã ký tự thì chữ có dấu (Cài đặt, Dịch, Đ...) bị đẩy xuống cuối danh sách */
+fun viKey(s: String): String =
+    java.text.Normalizer.normalize(s.trim(), java.text.Normalizer.Form.NFD)
+        .replace(Regex("\\p{M}+"), "").replace('đ', 'd').replace('Đ', 'D').lowercase()
+
+/** Sắp xếp theo thứ tự abc tiếng Việt (giống nhau thì xếp theo tên gốc để thứ tự luôn cố định) */
+fun <T> Iterable<T>.sortedVi(label: (T) -> String): List<T> =
+    map { Triple(viKey(label(it)), label(it).lowercase(), it) }
+        .sortedWith(compareBy<Triple<String, String, T>>({ it.first }, { it.second }))
+        .map { it.third }
 
 object Speaker {
     private var tts: android.speech.tts.TextToSpeech? = null
@@ -322,7 +347,7 @@ object Apps {
                 if (p !in map) map[p] = AppItem(it.loadLabel(pm).toString(), p, it.loadIcon(pm))
             }
         }
-        val r = map.values.sortedBy { it.label.lowercase() }
+        val r = map.values.sortedVi { it.label }
         cache = r
         return r
     }
@@ -407,7 +432,7 @@ fun appView(c: Context, a: AppItem, inGrid: Boolean = false, mult: Float = 1f, o
     addView(ImageView(c).apply { setImageDrawable(a.icon); layoutParams = LinearLayout.LayoutParams(c.dp((72 * sc).toInt()), c.dp((72 * sc).toInt()))
         clipToOutline = true
         outlineProvider = object : ViewOutlineProvider() { override fun getOutline(v: View, o: Outline) { o.setRoundRect(0, 0, v.width, v.height, c.dp(Apps.radius(c)).toFloat()) } } })
-    addView(TextView(c).apply { text = a.label; setTextColor(Color.WHITE); textSize = 13f * sc * Apps.fs(c); maxLines = 1; gravity = Gravity.CENTER })
+    addView(TextView(c).apply { text = a.label; setTextColor(Color.WHITE); textSize = 13f * sc * Apps.fs(c); maxLines = 1; gravity = Gravity.CENTER; if (inGrid) shade() })
     setOnFocusChangeListener { v, f ->
         v.scaleX = if (f && !Apps.rm(c)) 1.12f else 1f; v.scaleY = v.scaleX
         v.background = if (f) GradientDrawable().apply { cornerRadius = c.dp(Apps.radius(c) + 4).toFloat(); setColor(0x33FFFFFF) } else null
@@ -1348,9 +1373,9 @@ class AllAppsActivity : VActivity() {
         super.onCreate(b)
         val me = this
         grid = GridView(this).apply {
-            numColumns = 4 + Apps.int(me, "cols", 2); setBackgroundColor(0xEE000000.toInt()); setPadding(dp(40), dp(40), dp(40), dp(40))
-            // Ô đang chọn: nền trắng mờ, thay cho màu cam mặc định của TV
-            selector = GradientDrawable().apply { cornerRadius = dp(Apps.radius(me) + 4).toFloat(); setColor(0x33FFFFFF) }
+            numColumns = 4 + Apps.int(me, "cols", 2); setBackgroundColor(Color.TRANSPARENT); setPadding(dp(40), dp(40), dp(40), dp(40))
+            // Ô đang chọn: khung vuông trắng bao quanh, thay cho màu cam mặc định của TV
+            selector = selectBox(me)
             // Bấm OK / chạm = mở ứng dụng, giữ lâu = menu tuỳ chỉnh
             setOnItemClickListener { _, _, p, _ -> if (p in apps.indices) openApp(me, apps[p]) }
             setOnItemLongClickListener { _, _, p, _ -> if (p in apps.indices) showMenu(me, apps[p]) { fill() }; true }

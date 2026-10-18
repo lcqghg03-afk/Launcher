@@ -214,7 +214,7 @@ class SettingsActivity : VActivity() {
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
         list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(120), dp(20), dp(120), dp(40)) }
-        scroll = ScrollView(this).apply { setBackgroundColor(GLASS_BG); addView(list) }
+        scroll = ScrollView(this).apply { setBackgroundColor(Color.TRANSPARENT); addView(list) }   // trong suốt hoàn toàn, không còn lớp phủ tối
         setContentView(scroll)
         build()
         if (Apps.str(this, "home_fail") != null) { Apps.del(this, "home_fail"); list.post { homeFailDialog() } }
@@ -254,11 +254,12 @@ class SettingsActivity : VActivity() {
         val keepY = scroll.scrollY
         val keepIdx = focusedRow()
         list.removeAllViews()
-        list.addView(TextView(this).apply { text = "TV Launcher"; textSize = 24f; setTextColor(0xFF4D6BFF.toInt()); setPadding(dp(24), 0, 0, dp(12)) })
+        list.addView(TextView(this).apply { text = "TV Launcher"; textSize = 24f; setTextColor(0xFF4D6BFF.toInt()); setPadding(dp(24), 0, 0, dp(12)); shade() })
         item("Giới thiệu", "v$APP_VERSION", false, null, null) { showAbout() }
         item("Chuyển đầu vào (HDMI/AV)", null, false, null, null) { pickInput(this) }
         item("Cài đặt hệ thống", null, false, null, null) { openSystemSettings(this) }
         item("Cài đặt tivi", tvSettingsLabel() ?: "Chưa chọn", false, null, { Apps.del(this, "tvset_cmp") }) { openTvSettings() }
+        item("Trợ lý giọng nói", voiceLabel(), false, null, { Apps.del(this, "voice_pkg"); VoiceGuard.refresh() }) { chooseVoice() }
         choice("Chiều cao danh mục", "cat_h", arrayOf("Thấp", "Vừa", "Cao"), 1)
         choice("Bo góc ứng dụng", "radius", arrayOf("Vuông", "Vừa", "Tròn"), 1)
         item("Khởi động cùng thiết bị", bootLabel(), false, null, { Apps.del(this, "boot_src", "boot", "boot_app") }) { bootDialog() }
@@ -283,7 +284,7 @@ class SettingsActivity : VActivity() {
         choice("Cỡ chữ", "fontsz", arrayOf("Vừa", "Lớn", "Rất lớn"), 0)
         item("Khoá ứng dụng", if (Apps.str(this, "pin") == null) "Tắt" else "Đang bật (PIN ${pinLen(this)} số)", true, null, null) { lockDialog() }
         item("Khôi phục cài đặt TV Launcher", null, true, null, null) { guard(this) { confirmReset() } }
-        list.addView(TextView(this).apply { text = "TV Launcher By Lộc Hưng"; textSize = 14f; setTextColor(Color.WHITE); gravity = Gravity.CENTER; setPadding(0, dp(24), 0, 0) })
+        list.addView(TextView(this).apply { text = "TV Launcher By Lộc Hưng"; textSize = 14f; setTextColor(Color.WHITE); gravity = Gravity.CENTER; setPadding(0, dp(24), 0, 0); shade() })
         // Trả lại đúng vị trí cuộn và dòng đang chọn như trước khi dựng lại
         if (keepY > 0 || keepIdx >= 0) afterLayout {
             scroll.scrollTo(0, keepY)
@@ -358,10 +359,11 @@ class SettingsActivity : VActivity() {
         list.addView(LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL; isFocusable = true; isClickable = true
             setPadding(dp(24), dp(16), dp(24), dp(16))
-            addView(TextView(context).apply { text = title; textSize = 20f * Apps.fs(this@SettingsActivity); setTextColor(if (red) 0xFFFF4444.toInt() else Color.WHITE) }, LinearLayout.LayoutParams(0, -2, 1f))
-            if (value != null) addView(TextView(context).apply { text = value; textSize = 18f; setTextColor(0xFFBBBBBB.toInt()) })
+            addView(TextView(context).apply { text = title; textSize = 20f * Apps.fs(this@SettingsActivity); setTextColor(if (red) 0xFFFF4444.toInt() else Color.WHITE); shade() }, LinearLayout.LayoutParams(0, -2, 1f))
+            if (value != null) addView(TextView(context).apply { text = value; textSize = 18f; setTextColor(0xFFDDDDDD.toInt()); shade() })
             if (checked != null) addView(Switch(context).apply { isChecked = checked; isClickable = false; isFocusable = false })
-            setOnFocusChangeListener { v, f -> v.background = if (f) GradientDrawable().apply { cornerRadius = dp(12).toFloat(); setColor(0x55FFFFFF) } else null }
+            // Dòng đang chọn: có khung vuông trắng bao quanh để biết đang ở mục nào
+            background = selectBg(this@SettingsActivity)
             setOnClickListener { click() }
             if (reset != null) setOnLongClickListener { reset(); Toast.makeText(context, "Đã về mặc định", Toast.LENGTH_SHORT).show(); build(); true }
         })
@@ -494,7 +496,7 @@ class SettingsActivity : VActivity() {
             labels = entries.map { if (it == Environment.getExternalStorageDirectory()) "Bộ nhớ TV" else "USB / thẻ nhớ: ${it.name}" }
         } else {
             entries = (dir.listFiles() ?: emptyArray<File>()).filter { it.isDirectory || it.extension.lowercase() in exts }
-                .sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() }))
+                .sortedWith(compareBy({ !it.isDirectory }, { viKey(it.name) }, { it.name.lowercase() }))
             labels = entries.map { if (it.isDirectory) "[Thư mục] ${it.name}" else it.name }
         }
         val up = dir != null
@@ -813,7 +815,7 @@ class SettingsActivity : VActivity() {
                 }
             } catch (e: Exception) {}
         }
-        val all = found.values.sortedBy { it.loadLabel(pm).toString().lowercase() }
+        val all = found.values.sortedVi { it.loadLabel(pm).toString() }
         if (all.isEmpty()) { toast(this, "Không tìm thấy ứng dụng cài đặt nào"); return }
         val keys = listOf("setting", "cài đặt", "设置", "mitv", "picture", "tvmanager")
         val likely = all.filter { r ->
@@ -837,11 +839,31 @@ class SettingsActivity : VActivity() {
         if (likely.isEmpty()) show(all, false) else show(likely, likely.size < all.size)
     }
 
+    /** Giá trị hiện ở dòng "Trợ lý giọng nói": tên ứng dụng đã chọn, chưa chọn thì "Tự động" */
+    private fun voiceLabel(): String {
+        val p = Apps.str(this, "voice_pkg") ?: return "Tự động"
+        return Apps.loadAll(this).firstOrNull { it.pkg == p }?.label ?: "Tự động"
+    }
+
+    /** Chọn ứng dụng cho nút micro. Chỉ liệt kê ứng dụng có hỗ trợ giọng nói; chọn xong bấm Lưu mới áp dụng */
     private fun chooseVoice() {
-        val apps = Apps.loadAll(this)
+        val apps = VoiceGuard.capable(this)
+        val b = AlertDialog.Builder(this).setTitle("Trợ lý giọng nói")
+        if (apps.isEmpty()) {
+            b.setMessage("Không thấy ứng dụng nào hỗ trợ giọng nói trên TV này. Hãy cài một trợ lý giọng nói (ví dụ Kiki hoặc Google Assistant) rồi quay lại đây.")
+                .setPositiveButton("Đóng", null).show()
+            return
+        }
+        val cur = Apps.str(this, "voice_pkg")
+        var sel = if (cur == null) 0 else apps.indexOfFirst { it.pkg == cur }.let { if (it < 0) 0 else it + 1 }
         val names = arrayOf("Tự động (Kiki hoặc Google Assistant)") + apps.map { it.label }
-        AlertDialog.Builder(this).setTitle("Trợ lý giọng nói").setItems(names) { _, i ->
-            if (i == 0) Apps.del(this, "voice_pkg") else Apps.putStr(this, "voice_pkg", apps[i - 1].pkg); build() }.show()
+        b.setSingleChoiceItems(names, sel) { _, i -> sel = i }
+            .setPositiveButton("Lưu") { _, _ ->
+                if (sel == 0) Apps.del(this, "voice_pkg") else Apps.putStr(this, "voice_pkg", apps[sel - 1].pkg)
+                VoiceGuard.refresh(); build()
+                toast(this, "Đã lưu trợ lý giọng nói: " + (if (sel == 0) "Tự động" else apps[sel - 1].label))
+            }
+            .setNegativeButton("Huỷ", null).show()
     }
 
     private fun enabledServices(): List<String> = try {

@@ -127,6 +127,35 @@ object VoiceGuard {
         return chosen?.takeIf { p -> all.any { it.pkg == p } } ?: all.firstOrNull { it.label.contains("kiki", true) }?.pkg
     }
 
+    /** Trợ lý giọng nói quen thuộc nhận theo tên (một số app không khai báo với hệ thống). Muốn thêm trợ lý khác thì thêm tên vào đây */
+    private val VOICE_NAMES = listOf("kiki", "alexa", "gemini", "bixby", "google assistant", "trợ lý ảo", "trợ lý giọng nói", "voice assistant")
+
+    /** Các ứng dụng CÓ hỗ trợ giọng nói và mở được, dùng cho mục "Trợ lý giọng nói" trong Cài đặt.
+     *  Tính là hỗ trợ giọng nói khi: khai báo với hệ thống là trợ lý (VOICE_ASSIST / VOICE_COMMAND / ASSIST / VoiceInteractionService),
+     *  hoặc là trợ lý quen thuộc nhận theo tên (Kiki, Tiểu Ái, Alexa, Gemini, Bixby...). Ứng dụng khác không có trong danh sách. Đã xếp abc */
+    fun capable(c: Context): List<AppItem> = try {
+        val pm = c.packageManager
+        val pk = HashSet<String>()
+        listOf(Intent("android.intent.action.VOICE_ASSIST"), Intent(Intent.ACTION_VOICE_COMMAND), Intent(Intent.ACTION_ASSIST)).forEach { i ->
+            pm.queryIntentActivities(i, 0).forEach { r -> r.activityInfo?.packageName?.let { pk.add(it) } }
+        }
+        pm.queryIntentServices(Intent("android.service.voice.VoiceInteractionService"), 0).forEach { r -> r.serviceInfo?.packageName?.let { pk.add(it) } }
+        Apps.loadAll(c).filter { a ->
+            a.pkg != c.packageName && !HomeGuard.isSystemPkg(a.pkg) &&
+                (a.pkg in pk || isXiaoAi(a.label, a.pkg) || VOICE_NAMES.any { a.label.contains(it, true) || a.pkg.contains(it, true) })
+        }
+    } catch (e: Exception) { emptyList() }
+
+    /** Mở thẳng chế độ nghe của ứng dụng (nếu app có khai báo), để bấm micro là nói được ngay */
+    private fun openVoice(c: Context, pkg: String): Boolean {
+        val pm = c.packageManager
+        for (a in listOf("android.intent.action.VOICE_ASSIST", Intent.ACTION_VOICE_COMMAND, Intent.ACTION_ASSIST)) {
+            val i = Intent(a).setPackage(pkg)
+            if (pm.resolveActivity(i, 0) != null && safeStart(c, i)) return true
+        }
+        return false
+    }
+
     /** Các trợ lý giọng nói trên TV có thể chặn: (gói, tên). Không gồm TV Launcher, Google, gói hệ thống và trợ lý thay thế */
     fun assistants(c: Context): List<Pair<String, String>> = try {
         val pm = c.packageManager
@@ -159,7 +188,11 @@ object VoiceGuard {
      *  Trả về true nếu đã mở được. Dùng cho cả nút micro trong TV Launcher lẫn nút micro trên điều khiển */
     fun launch(c: Context): Boolean {
         val rep = replacement(c)
-        if (rep != null) { Apps.open(c, rep); return true }
+        if (rep != null) {
+            // Trợ lý do người dùng chọn: thử mở thẳng chế độ nghe trước, không có thì mở ứng dụng như bình thường
+            if (!(rep == Apps.str(c, "voice_pkg") && openVoice(c, rep))) Apps.open(c, rep)
+            return true
+        }
         val pm = c.packageManager
         for (g in listOf("com.google.android.googlequicksearchbox", "com.google.android.katniss")) {
             for (a in listOf("android.intent.action.VOICE_ASSIST", Intent.ACTION_ASSIST)) {
