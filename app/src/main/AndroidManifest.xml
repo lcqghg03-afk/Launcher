@@ -33,8 +33,6 @@
             </intent-filter>
         </activity>
         <activity android:name=".AllAppsActivity" android:exported="false" android:screenOrientation="landscape"/>
-        <activity android:name=".ActivationActivity" android:exported="false" android:screenOrientation="landscape"
-            android:theme="@android:style/Theme.Material.NoActionBar"/>
         <activity android:name=".SettingsActivity" android:exported="false" android:screenOrientation="landscape"
             android:theme="@android:style/Theme.Material.NoActionBar"/>
         <receiver android:name=".BootReceiver" android:exported="true">
