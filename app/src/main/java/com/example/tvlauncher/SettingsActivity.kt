@@ -194,6 +194,7 @@ class BootReceiver : BroadcastReceiver() {
 class SettingsActivity : VActivity() {
     private lateinit var list: LinearLayout
     private lateinit var scroll: ScrollView
+    private lateinit var root: FrameLayout
     private var pendingVideo = false
     private val REQ_HOME = 3
     private var refreshOnBack = false   // đã mở màn hình hệ thống (giao diện mặc định / trợ năng) => quay lại thì làm mới trạng thái
@@ -215,13 +216,28 @@ class SettingsActivity : VActivity() {
         super.onCreate(b)
         list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(24), dp(16), dp(24), dp(24)) }
         // Lớp phủ kính (giống bảng menu) đặt sau danh sách, chừa lề hai bên để vẫn thấy ảnh nền
-        scroll = ScrollView(this).apply { background = glassPanel(this@SettingsActivity); addView(list) }
-        setContentView(FrameLayout(this).apply { addView(scroll, FrameLayout.LayoutParams(-1, -1).apply { setMargins(dp(96), dp(24), dp(96), dp(24)) }) })
+        // ScrollView không tự nhận con trỏ và tắt vệt sáng mặc định của hệ thống: trước đây lúc mới vào, ScrollView giữ con trỏ nên bị phủ một lớp mờ
+        // cho tới khi bấm xuống một dòng. Giờ con trỏ luôn nằm ở một dòng cài đặt nên lúc mới vào và sau khi bấm xuống trông y hệt nhau
+        scroll = ScrollView(this).apply { background = glassPanel(this@SettingsActivity); isFocusable = false; noSysHighlight(); addView(list) }
+        root = FrameLayout(this).apply { setBackgroundColor(screenBg(this@SettingsActivity)); noSysHighlight(); addView(scroll, panelParams(this@SettingsActivity, 96, 24)) }
+        setContentView(root)
         build()
         if (Apps.str(this, "home_fail") != null) { Apps.del(this, "home_fail"); list.post { homeFailDialog() } }
         // Sau khi màn hình được tạo lại (đổi kích cỡ TV...), đưa con trỏ về đúng dòng đang chọn thay vì về đầu danh sách
         val idx = b?.getInt("focus_idx", -1) ?: -1
-        if (idx >= 0) afterLayout { focusRow(idx) }
+        if (idx >= 0) afterLayout { focusRow(idx) } else afterLayout { focusFirstRow() }
+    }
+
+    // Đổi màu nền bảng xong thì áp dụng ngay cho màn hình Cài đặt này, không cần mở lại
+    private fun applyPanel() {
+        scroll.background = glassPanel(this)
+        scroll.layoutParams = panelParams(this, 96, 24)   // rút gọn / đầy màn hình
+        root.setBackgroundColor(screenBg(this))
+    }
+
+    // Lúc mới vào Cài đặt, đưa con trỏ về dòng đầu tiên
+    private fun focusFirstRow() {
+        (0 until list.childCount).map { list.getChildAt(it) }.firstOrNull { it.isFocusable }?.requestFocus()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -264,6 +280,10 @@ class SettingsActivity : VActivity() {
         item("Trợ lý giọng nói", voiceLabel(), false, null, { Apps.del(this, "voice_pkg"); VoiceGuard.refresh() }) { chooseVoice() }
         choice("Chiều cao danh mục", "cat_h", arrayOf("Thấp", "Vừa", "Cao"), 1)
         choice("Bo góc ứng dụng", "radius", arrayOf("Vuông", "Vừa", "Tròn"), 1)
+        item("Kích thước bảng", if (panelFull(this)) "Đầy màn hình" else "Rút gọn", false, null, { Apps.del(this, "panel_size"); applyPanel() }) {
+            GlassBuilder(this).setTitle("Kích thước bảng (Cài đặt, Tất cả ứng dụng)")
+                .setSingleChoiceItems(arrayOf("Rút gọn", "Đầy màn hình"), Apps.int(this, "panel_size", 0)) { d, i -> Apps.putInt(this, "panel_size", i); d.dismiss(); applyPanel(); build() }.show() }
+        item("Màu nền bảng", panelLabel(), false, null, { Apps.del(this, "panel_color", "panel_custom"); applyPanel() }) { panelColorDialog() }
         item("Khởi động cùng thiết bị", bootLabel(), false, null, { Apps.del(this, "boot_src", "boot", "boot_app") }) { bootDialog() }
         choice("Số cột ứng dụng", "cols", arrayOf("4", "5", "6", "7", "8"), 2)
         val clear = { Apps.del(this, "bg_uri", "bg_type") }
@@ -361,10 +381,101 @@ class SettingsActivity : VActivity() {
         ).setPositiveButton("Đóng", null).show()
     }
 
+    // Tên màu đang dùng, hiện ở dòng "Màu nền bảng"
+    private fun panelLabel(): String {
+        val cur = panelColor(this)
+        return PANEL_PRESETS.firstOrNull { it.second == cur }?.first ?: "Tuỳ chỉnh"
+    }
+
+    // Bảng chọn màu nền cho Cài đặt, Tất cả ứng dụng và menu ấn giữ ứng dụng: "Trong suốt", các màu có sẵn và "Tuỳ chỉnh"
+    private fun panelColorDialog() {
+        val me = this
+        val cur = panelColor(me)
+        val isPreset = PANEL_PRESETS.any { it.second == cur }
+        var dlg: AlertDialog? = null
+        var curView: View? = null
+        // Mỗi ô: tên, màu tô, có phải ô "Tuỳ chỉnh" không
+        val cells = PANEL_PRESETS.map { Triple(it.first, it.second, false) } +
+            Triple("Tuỳ chỉnh...", Apps.int(me, "panel_custom", PANEL_DEFAULT), true)
+        val col = LinearLayout(me).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(4), dp(4), dp(4), dp(4)) }
+        cells.chunked(4).forEach { chunk ->
+            val row = LinearLayout(me).apply { orientation = LinearLayout.HORIZONTAL }
+            chunk.forEach { cell ->
+                val label = cell.first; val color = cell.second; val custom = cell.third
+                val isCur = if (custom) (!isPreset && cur != PANEL_GLASS) else color == cur
+                // Ô "Trong suốt" vẽ dạng chuyển dần từ tối sang sáng cho dễ nhận ra, các ô khác là màu đặc
+                fun box(w: Int, edge: Int): GradientDrawable =
+                    (if (color == PANEL_GLASS) GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(0xFF101018.toInt(), 0xFF5A5A78.toInt()))
+                     else GradientDrawable().apply { setColor(color) }).apply { setStroke(dp(w), edge) }
+                val cellView = TextView(me).apply {
+                    text = (if (isCur) "✓ " else "") + label
+                    textSize = 14f; gravity = Gravity.CENTER; setTextColor(Color.WHITE); shade()
+                    isFocusable = true; isClickable = true
+                    background = android.graphics.drawable.StateListDrawable().apply {
+                        addState(intArrayOf(android.R.attr.state_focused), box(4, Color.WHITE))
+                        addState(intArrayOf(), box(1, 0xAAFFFFFF.toInt()))
+                    }
+                    setOnClickListener {
+                        dlg?.dismiss()
+                        if (custom) customPanelDialog()
+                        else {
+                            Apps.putInt(me, "panel_color", color)
+                            applyPanel(); build()
+                            toast(me, "Đã đổi màu nền bảng: $label")
+                        }
+                    }
+                }
+                if (isCur) curView = cellView
+                row.addView(cellView, LinearLayout.LayoutParams(0, dp(64), 1f).apply { setMargins(dp(4), dp(4), dp(4), dp(4)) })
+            }
+            col.addView(row, LinearLayout.LayoutParams(-1, -2))
+        }
+        dlg = GlassBuilder(me).setTitle("Màu nền bảng")
+            .setView(ScrollView(me).apply { addView(col) })
+            .setNegativeButton("Đóng", null).show()
+        curView?.requestFocus()
+    }
+
+    // Tự chọn màu: 3 thanh Đỏ / Xanh lá / Xanh dương và thanh Độ đục, có ô xem trước. Mỗi màu chỉ kéo tới mức tối vừa để chữ trắng vẫn đọc rõ
+    private fun customPanelDialog() {
+        val me = this
+        val start = panelColor(me).let { if (it == PANEL_GLASS) Apps.int(me, "panel_custom", PANEL_DEFAULT) else it }
+        val v = intArrayOf(Color.alpha(start), Color.red(start), Color.green(start), Color.blue(start))   // độ đục, đỏ, xanh lá, xanh dương
+        val names = arrayOf("Độ đục (thấp = nhìn xuyên được)", "Đỏ", "Xanh lá", "Xanh dương")
+        val col = LinearLayout(me).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(8), dp(8), dp(8), dp(8)) }
+        val preview = TextView(me).apply { text = "Xem trước"; textSize = 18f; gravity = Gravity.CENTER; setTextColor(Color.WHITE); shade() }
+        fun argb() = Color.argb(v[0], v[1], v[2], v[3])
+        fun paint() { preview.background = GradientDrawable().apply { setColor(argb()); setStroke(dp(2), Color.WHITE) } }
+        col.addView(preview, LinearLayout.LayoutParams(-1, dp(72)).apply { bottomMargin = dp(12) })
+        for (i in 0..3) {
+            val lo = if (i == 0) 40 else 0
+            val hi = if (i == 0) 255 else 170
+            v[i] = v[i].coerceIn(lo, hi)
+            col.addView(TextView(me).apply { text = names[i]; textSize = 16f; setTextColor(Color.WHITE); shade() })
+            col.addView(SeekBar(me).apply {
+                max = hi - lo; progress = v[i] - lo; setKeyProgressIncrement(8)
+                setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                    override fun onProgressChanged(s: SeekBar?, p: Int, fromUser: Boolean) { v[i] = p + lo; paint() }
+                    override fun onStartTrackingTouch(s: SeekBar?) {}
+                    override fun onStopTrackingTouch(s: SeekBar?) {}
+                })
+            }, LinearLayout.LayoutParams(-1, -2))
+        }
+        paint()
+        GlassBuilder(me).setTitle("Màu tuỳ chỉnh")
+            .setView(ScrollView(me).apply { addView(col) })
+            .setPositiveButton("Lưu") { _, _ ->
+                Apps.putInt(me, "panel_color", argb()); Apps.putInt(me, "panel_custom", argb())
+                applyPanel(); build()
+                toast(me, "Đã đổi màu nền bảng: Tuỳ chỉnh")
+            }
+            .setNegativeButton("Đóng", null).show()
+    }
+
     private fun item(title: String, value: String?, red: Boolean, checked: Boolean?, reset: (() -> Unit)?, click: () -> Unit) {
         list.addView(LinearLayout(this).apply {
             tag = title   // tên dòng, dùng để xếp abc trong build()
-            gravity = Gravity.CENTER_VERTICAL; isFocusable = true; isClickable = true
+            gravity = Gravity.CENTER_VERTICAL; isFocusable = true; isClickable = true; noSysHighlight()
             setPadding(dp(24), dp(16), dp(24), dp(16))
             addView(TextView(context).apply { text = title; textSize = 20f * Apps.fs(this@SettingsActivity); setTextColor(if (red) 0xFFFF4444.toInt() else Color.WHITE); shade() }, LinearLayout.LayoutParams(0, -2, 1f))
             if (value != null) addView(TextView(context).apply { text = value; textSize = 18f; setTextColor(0xFFDDDDDD.toInt()); shade() })

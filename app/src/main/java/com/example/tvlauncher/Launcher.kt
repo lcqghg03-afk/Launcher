@@ -477,8 +477,58 @@ fun sizeDialog(c: Context, key: String, title: String, onChange: () -> Unit) {
 /** Màu nền "kính" dùng cho bảng menu và màn hình Cài đặt: càng nhỏ phần alpha (2 số đầu) càng trong suốt */
 val GLASS_BG = 0x88101018.toInt()
 
-/** Tấm nền "kính" có viền mảnh, dùng chung cho bảng menu, màn hình Cài đặt và Tất cả ứng dụng */
-fun glassPanel(c: Context): GradientDrawable = GradientDrawable().apply { setColor(GLASS_BG); setStroke(c.dp(1), 0x66FFFFFF) }
+/** Màu nền bảng (Cài đặt, Tất cả ứng dụng, menu ấn giữ ứng dụng, hộp thoại). Lưu ở khoá "panel_color":
+ *  PANEL_GLASS (0) = kính trong suốt, còn lại là màu ARGB. Mặc định là nền đặc, không trong suốt */
+const val PANEL_GLASS = 0
+val PANEL_DEFAULT = 0xFF101018.toInt()
+
+/** Các màu có sẵn trong bảng chọn màu (đều là màu tối vừa để chữ trắng vẫn đọc rõ) */
+val PANEL_PRESETS: List<Pair<String, Int>> = listOf(
+    "Trong suốt" to PANEL_GLASS,
+    "Đen xanh (mặc định)" to PANEL_DEFAULT,
+    "Đen" to 0xFF000000.toInt(),
+    "Xám than" to 0xFF2B2B33.toInt(),
+    "Xanh navy" to 0xFF14285F.toInt(),
+    "Xanh dương" to 0xFF1E4FA8.toInt(),
+    "Xanh ngọc" to 0xFF0F5C63.toInt(),
+    "Xanh lá" to 0xFF1B5E3A.toInt(),
+    "Vàng đồng" to 0xFF7A5A12.toInt(),
+    "Cam đất" to 0xFF9A4A14.toInt(),
+    "Đỏ rượu" to 0xFF6E1626.toInt(),
+    "Hồng đậm" to 0xFF9C2A62.toInt(),
+    "Tím" to 0xFF4B2A8C.toInt(),
+    "Tím than" to 0xFF2A1B4D.toInt(),
+    "Nâu" to 0xFF4A3426.toInt()
+)
+
+fun panelColor(c: Context): Int = Apps.int(c, "panel_color", PANEL_DEFAULT)
+
+/** Màu tô thật của tấm bảng: chọn "Trong suốt" thì dùng nền kính, còn lại dùng đúng màu đã chọn */
+fun panelFill(c: Context, overlay: Boolean = false): Int {
+    val p = panelColor(c)
+    val base = if (p == PANEL_GLASS) GLASS_BG else p
+    // Hộp thoại / menu nổi lên trên một màn hình khác: không để quá mờ, nếu không sẽ thấy lờ mờ nội dung màn hình phía sau xuyên qua
+    return if (overlay && Color.alpha(base) < 0xE0) Color.argb(0xE0, Color.red(base), Color.green(base), Color.blue(base)) else base
+}
+
+/** Nền phủ cả màn hình Cài đặt / Tất cả ứng dụng: bảng đặc thì phủ kín bằng màu tối hơn một chút (không còn thấy màn hình chính phía sau),
+ *  kính hoặc màu có độ mờ thì để trong suốt như trước */
+fun screenBg(c: Context): Int {
+    val p = panelColor(c)
+    if (p == PANEL_GLASS || Color.alpha(p) < 255) return 0
+    return Color.rgb(Color.red(p) * 55 / 100, Color.green(p) * 55 / 100, Color.blue(p) * 55 / 100)
+}
+
+/** Kích thước bảng Cài đặt / Tất cả ứng dụng. Khoá "panel_size": 0 = rút gọn (chừa lề quanh bảng), 1 = đầy màn hình (không chừa lề) */
+fun panelFull(c: Context): Boolean = Apps.int(c, "panel_size", 0) == 1
+
+/** Lề của bảng trong khung màn hình: dh / dv là lề ngang / dọc (dp) khi rút gọn, đầy màn hình thì không chừa lề */
+fun panelParams(c: Context, dh: Int, dv: Int): FrameLayout.LayoutParams = FrameLayout.LayoutParams(-1, -1).apply {
+    if (panelFull(c)) setMargins(0, 0, 0, 0) else setMargins(c.dp(dh), c.dp(dv), c.dp(dh), c.dp(dv))
+}
+
+/** Tấm nền có viền mảnh, dùng chung cho bảng menu, màn hình Cài đặt, Tất cả ứng dụng và hộp thoại. Màu theo mục "Màu nền bảng" trong Cài đặt */
+fun glassPanel(c: Context, overlay: Boolean = false): GradientDrawable = GradientDrawable().apply { setColor(panelFill(c, overlay)); setStroke(c.dp(1), 0x66FFFFFF) }
 
 /** Bảng menu trong suốt (nhìn xuyên được màn hình phía sau), dòng đang chọn có khung vuông trắng bao quanh */
 fun glassMenu(c: Context, title: String, labels: List<String>, focus: Int = 0, pick: (Int) -> Unit) {
@@ -491,7 +541,7 @@ fun glassMenu(c: Context, title: String, labels: List<String>, focus: Int = 0, p
         val t = TextView(c).apply {
             text = l; textSize = 20f * fs; setTextColor(Color.WHITE)
             setPadding(c.dp(16), c.dp(14), c.dp(16), c.dp(14))
-            isFocusable = true; isClickable = true
+            isFocusable = true; isClickable = true; noSysHighlight()
             background = StateListDrawable().apply {
                 addState(intArrayOf(android.R.attr.state_focused), GradientDrawable().apply { setColor(0x33FFFFFF); setStroke(c.dp(3), Color.WHITE) })
                 addState(intArrayOf(), GradientDrawable().apply { setColor(0); setStroke(c.dp(3), 0) })
@@ -504,7 +554,7 @@ fun glassMenu(c: Context, title: String, labels: List<String>, focus: Int = 0, p
     val col = LinearLayout(c).apply {
         orientation = LinearLayout.VERTICAL
         setPadding(c.dp(12), c.dp(12), c.dp(12), c.dp(12))
-        background = glassPanel(c)
+        background = glassPanel(c, true)
         addView(TextView(c).apply {
             text = title; textSize = 22f * fs; setTextColor(Color.WHITE); maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
             setPadding(c.dp(16), c.dp(8), c.dp(16), c.dp(12))
@@ -530,11 +580,14 @@ class GlassBuilder(c: Context) : AlertDialog.Builder(c) {
     override fun show(): AlertDialog { val d = super.show(); glassify(d); return d }
 }
 
-/** Ô nhập / nút bấm trong hộp thoại kính: viền mảnh khi thường, khung vuông trắng dày khi đang được chọn */
+/** Ô nhập / nút bấm trong hộp thoại: nền đặc để luôn nhìn rõ chữ dù bảng trong suốt; viền mảnh khi thường, khung vuông trắng dày khi đang được chọn */
 fun glassField(c: Context): StateListDrawable = StateListDrawable().apply {
-    addState(intArrayOf(android.R.attr.state_focused), selectBox(c))
-    addState(intArrayOf(), GradientDrawable().apply { setColor(0x11FFFFFF); setStroke(c.dp(1), 0x88FFFFFF.toInt()) })
+    addState(intArrayOf(android.R.attr.state_focused), GradientDrawable().apply { setColor(0xFF3A3A52.toInt()); setStroke(c.dp(3), Color.WHITE) })
+    addState(intArrayOf(), GradientDrawable().apply { setColor(0xFF23232F.toInt()); setStroke(c.dp(1), 0xAAFFFFFF.toInt()) })
 }
+
+/** Khung chọn dòng trong danh sách của hộp thoại: nền trắng mờ đậm hơn một chút so với khung ở Cài đặt để dòng đang chọn nổi rõ */
+fun dialogSelectBox(c: Context): GradientDrawable = GradientDrawable().apply { setColor(0x44FFFFFF); setStroke(c.dp(3), Color.WHITE) }
 
 private fun sysId(name: String): Int = android.content.res.Resources.getSystem().getIdentifier(name, "id", "android")
 private val ID_TITLE by lazy { sysId("alertTitle") }
@@ -560,7 +613,7 @@ fun glassify(d: AlertDialog) {
             ?: decor.findViewById<android.view.ViewGroup>(android.R.id.content)?.getChildAt(0) ?: return
         IDS_DIVIDER.forEach { decor.findViewById<View>(it)?.visibility = View.GONE }
         glassTree(c, root)   // trước, vì bước này xoá nền có sẵn của mọi khung (kể cả khung ngoài cùng)
-        root.background = glassPanel(c)
+        root.background = glassPanel(c, true)
         root.setPadding(c.dp(12), c.dp(12), c.dp(12), c.dp(12))
     } catch (e: Exception) { /* kiểu mặc định vẫn dùng được */ }
 }
@@ -591,7 +644,7 @@ private fun glassTree(c: Context, v: View) {
             v.background = selectBg(c)
         }
         is ListView -> {
-            v.selector = selectBox(c); v.divider = null; v.dividerHeight = 0; v.cacheColorHint = 0; v.background = null
+            v.selector = dialogSelectBox(c); v.divider = null; v.dividerHeight = 0; v.cacheColorHint = 0; v.background = null
             // Hàng của danh sách được tạo / tái dùng lúc cuộn nên tô kiểu mỗi lần hàng được thêm vào
             v.setOnHierarchyChangeListener(object : android.view.ViewGroup.OnHierarchyChangeListener {
                 override fun onChildViewAdded(parent: View, child: View) { glassRow(c, child) }
@@ -1543,7 +1596,7 @@ class AllAppsActivity : VActivity() {
         super.onCreate(b)
         val me = this
         grid = GridView(this).apply {
-            numColumns = 4 + Apps.int(me, "cols", 2); background = glassPanel(me); setPadding(dp(40), dp(40), dp(40), dp(40))
+            numColumns = 4 + Apps.int(me, "cols", 2); background = glassPanel(me); setPadding(dp(40), dp(40), dp(40), dp(40)); noSysHighlight()
             // Ô đang chọn: khung vuông trắng bao quanh, thay cho màu cam mặc định của TV
             selector = selectBox(me)
             // Bấm OK / chạm = mở ứng dụng, giữ lâu = menu tuỳ chỉnh
@@ -1569,7 +1622,7 @@ class AllAppsActivity : VActivity() {
             })
         }
         // Lớp phủ kính chừa lề quanh màn hình (giống bảng menu), nhìn xuyên được ảnh nền phía sau
-        setContentView(FrameLayout(this).apply { addView(grid, FrameLayout.LayoutParams(-1, -1).apply { setMargins(dp(32), dp(24), dp(32), dp(24)) }) })
+        setContentView(FrameLayout(this).apply { setBackgroundColor(screenBg(me)); noSysHighlight(); addView(grid, panelParams(me, 32, 24)) })
     }
     override fun onResume() { super.onResume(); fill() }
     private fun fill() {
