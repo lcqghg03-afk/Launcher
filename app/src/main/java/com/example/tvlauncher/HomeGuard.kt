@@ -18,18 +18,29 @@ object HomeGuard {
     @Volatile private var cacheAt = 0L
 
     /** Gọi khi chính người dùng mở ứng dụng/đầu vào từ TV Launcher: tạm không chặn vài giây để không chặn nhầm lựa chọn của họ */
-    fun allow(ms: Long = 4000L) { allowUntil = SystemClock.uptimeMillis() + ms }
+    fun allow(ms: Long = 4000L) { allowUntil = maxOf(allowUntil, SystemClock.uptimeMillis() + ms) }
     fun isAllowed() = SystemClock.uptimeMillis() < allowUntil
+
+    /** Hết thời gian tạm dừng chặn (vd người dùng đã quay lại từ màn hình hệ thống) */
+    fun resume() { allowUntil = 0L }
+
+    /** Dịch vụ trợ năng của TV Launcher đang thật sự chạy (hệ thống đã kết nối dịch vụ) */
+    fun running(): Boolean = HomeGuardService.connected
+
+    /** Gói của hệ thống (cài đặt, cấp quyền, cài ứng dụng, thanh hệ thống, trình cài đặt lần đầu): không bao giờ chặn,
+     *  nếu không người dùng sẽ bị đá ra giữa chừng khi đang đổi giao diện mặc định hoặc cấp quyền */
+    private val SAFE_PARTS = listOf("setup", "provision", "settings", "permissioncontroller", "packageinstaller", "systemui")
+    fun isSystemPkg(p: String) = p == "android" || SAFE_PARTS.any { p.contains(it, true) }
 
     /** Báo danh sách chặn đã đổi, lần sau đọc lại */
     fun refresh() { cacheAt = 0L }
 
-    /** Các giao diện chính (Home) khác trên TV: (gói, tên). Không gồm TV Launcher và trình cài đặt lần đầu của máy */
+    /** Các giao diện chính (Home) khác trên TV: (gói, tên). Không gồm TV Launcher, trình cài đặt lần đầu và các gói hệ thống (cài đặt, cấp quyền...) */
     fun homeApps(c: Context): List<Pair<String, String>> = try {
         val pm = c.packageManager
         val i = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
         pm.queryIntentActivities(i, 0).mapNotNull { it.activityInfo?.packageName }.distinct()
-            .filter { it != c.packageName && !it.contains("setup", true) && !it.contains("provision", true) }
+            .filter { it != c.packageName && !isSystemPkg(it) }
             .map { p -> p to (try { pm.getApplicationLabel(pm.getApplicationInfo(p, 0)).toString() } catch (e: Exception) { p }) }
             .sortedBy { it.second.lowercase() }
     } catch (e: Exception) { emptyList() }
@@ -81,11 +92,20 @@ object HomeGuard {
 class HomeGuardService : AccessibilityService() {
     private var last = 0L
 
+    companion object {
+        /** true khi hệ thống đã kết nối dịch vụ (dùng để báo "bật chặn thành công") */
+        @Volatile var connected = false
+    }
+
+    override fun onServiceConnected() { super.onServiceConnected(); connected = true }
+    override fun onUnbind(intent: Intent?): Boolean { connected = false; return super.onUnbind(intent) }
+    override fun onDestroy() { connected = false; super.onDestroy() }
+
     override fun onAccessibilityEvent(e: AccessibilityEvent?) {
         if (e == null || e.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
         if (!Apps.bool(this, "hg_on", false) || HomeGuard.isAllowed()) return
         val pkg = e.packageName?.toString() ?: return
-        if (pkg == packageName || pkg !in HomeGuard.blocked(this)) return
+        if (pkg == packageName || HomeGuard.isSystemPkg(pkg) || pkg !in HomeGuard.blocked(this)) return
         // Chỉ tính khi là một màn hình (Activity) thật của gói đó, bỏ qua hộp thoại / thông báo nổi
         val cls = e.className?.toString() ?: return
         try { packageManager.getActivityInfo(ComponentName(pkg, cls), 0) } catch (x: Exception) { return }

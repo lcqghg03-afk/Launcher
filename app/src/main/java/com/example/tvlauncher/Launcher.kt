@@ -137,7 +137,7 @@ fun viCtx(b: Context): Context {
 // ===== Độ phân giải / chế độ xuất hình của TV =====
 // Ứng dụng chỉ đọc được các chế độ mà TV báo (Display.supportedModes) và xin TV đổi chế độ khi TV Launcher đang ở phía trước.
 // Không tự đổi được độ phân giải giao diện của hệ thống (nhiều TV 4K vẽ giao diện ở 1920x1080 rồi phóng lên 4K).
-class DispMode(val key: String, val label: String, val w: Int, val h: Int, val id: Int)
+class DispMode(val key: String, val label: String, val w: Int, val h: Int, val id: Int, val hz: Float)
 
 private fun resName(w: Int, h: Int): String = when {
     w >= 7680 -> "8K"
@@ -155,17 +155,37 @@ fun displayModes(a: Activity): List<DispMode> {
         a.windowManager.defaultDisplay.supportedModes.map { m ->
             val w = m.physicalWidth; val h = m.physicalHeight; val r = m.refreshRate
             val hz = if (Math.abs(r - Math.round(r)) < 0.05f) "${Math.round(r)}Hz" else String.format(Locale.US, "%.2fHz", r)
-            DispMode(String.format(Locale.US, "%dx%d@%.2f", w, h, r), "${resName(w, h)}  ${w}x${h}  •  $hz", w, h, m.modeId)
+            DispMode(String.format(Locale.US, "%dx%d@%.2f", w, h, r), "${resName(w, h)}  ${w}x${h}  •  $hz", w, h, m.modeId, r)
         }.distinctBy { it.key }.sortedWith(compareByDescending<DispMode> { it.w * it.h }.thenByDescending { it.key })
     } catch (e: Exception) { emptyList() }
 }
 
-/** Áp dụng chế độ xuất hình đã chọn trong Cài đặt cho cửa sổ hiện tại (không chọn / TV không có chế độ đó = để TV tự quyết) */
+/** Các mức độ phân giải để chọn. Khoá lưu ở "dispmode": không có = Tự động (theo TV), "fhd" | "2k" | "4k".
+ *  minW..maxW là khoảng chiều rộng (cạnh dài) của chế độ TV báo thì tính là mức đó */
+class ResTier(val key: String, val label: String, val minW: Int, val maxW: Int)
+val RES_TIERS = listOf(
+    ResTier("fhd", "Full HD (1080p)", 1800, 2300),
+    ResTier("2k", "2K (1440p)", 2400, 3300),
+    ResTier("4k", "4K (2160p)", 3600, 4500)
+)
+
+/** Chế độ xuất hình mà TV báo hỗ trợ cho một mức. Có nhiều tần số quét thì lấy cái gần tần số hiện tại nhất (bằng nhau thì lấy cao hơn).
+ *  null = TV không báo hỗ trợ mức này */
+@Suppress("DEPRECATION")
+fun modeForTier(a: Activity, key: String): DispMode? {
+    val t = RES_TIERS.firstOrNull { it.key == key } ?: return null
+    val cands = displayModes(a).filter { maxOf(it.w, it.h) in t.minW..t.maxW }
+    if (cands.isEmpty()) return null
+    val cur = try { a.windowManager.defaultDisplay.refreshRate } catch (e: Exception) { 60f }
+    return cands.sortedWith(compareBy<DispMode>({ Math.abs(it.hz - cur) }, { -it.hz })).first()
+}
+
+/** Áp dụng mức đã chọn trong Cài đặt cho cửa sổ hiện tại (Tự động / TV không có mức đó = để TV tự quyết; giá trị lưu kiểu cũ cũng về Tự động) */
 fun applyDisplayMode(a: Activity) {
     if (Build.VERSION.SDK_INT < 23) return
     try {
         val key = Apps.str(a, "dispmode")
-        val id = if (key == null) 0 else displayModes(a).firstOrNull { it.key == key }?.id ?: 0
+        val id = if (key == null) 0 else modeForTier(a, key)?.id ?: 0
         val lp = a.window.attributes
         if (lp.preferredDisplayModeId != id) { lp.preferredDisplayModeId = id; a.window.attributes = lp }
     } catch (e: Exception) {}

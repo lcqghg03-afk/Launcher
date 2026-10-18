@@ -177,10 +177,18 @@ class SettingsActivity : VActivity() {
     private var pendingVideo = false
     private val REQ_HOME = 3
     private var refreshOnBack = false   // đã mở màn hình hệ thống (giao diện mặc định / trợ năng) => quay lại thì làm mới trạng thái
+    private var homeCheckOnBack = false  // quay lại thì báo đã đặt được giao diện mặc định hay chưa
+    private var guardCheckOnBack = false // quay lại thì báo bật chặn thành công hay thất bại
 
     override fun onResume() {
         super.onResume()
-        if (refreshOnBack) { refreshOnBack = false; build() }
+        if (refreshOnBack) {
+            refreshOnBack = false
+            HomeGuard.resume()   // đã quay lại từ màn hình hệ thống: hết thời gian tạm dừng chặn
+            build()
+            if (homeCheckOnBack) { homeCheckOnBack = false; reportDefaultHome() }
+            if (guardCheckOnBack) { guardCheckOnBack = false; verifyGuard() }
+        }
     }
 
     override fun onCreate(b: Bundle?) {
@@ -296,39 +304,51 @@ class SettingsActivity : VActivity() {
             val m = windowManager.defaultDisplay.mode
             if (m.physicalWidth != dm.widthPixels || m.physicalHeight != dm.heightPixels) s += " (TV xuất ${m.physicalWidth}x${m.physicalHeight})"
         } catch (e: Exception) {}
-        if (Apps.str(this, "dispmode") != null) s += "  •  đã chọn"
+        s += "  •  " + (RES_TIERS.firstOrNull { it.key == Apps.str(this, "dispmode") }?.label ?: "Tự động")
         return s
     }
 
-    // Chọn chế độ xuất hình (độ phân giải + tần số quét) trong số các chế độ TV báo cho ứng dụng
+    // Chọn độ phân giải: Tự động (theo TV) hoặc Full HD / 2K / 4K. Chỉ xin được mức mà TV báo hỗ trợ, rồi báo thành công / thất bại
     private fun resolutionDialog() {
-        val modes = displayModes(this)
         val cur = Apps.str(this, "dispmode")
         val labels = ArrayList<String>()
         labels.add("Tự động (theo TV)")
-        modes.forEach { labels.add(it.label) }
+        RES_TIERS.forEach { t -> labels.add(if (modeForTier(this, t.key) == null) t.label + "  •  TV không hỗ trợ" else t.label) }
         labels.add("Vì sao TV 4K chỉ hiện Full HD?")
-        val checked = if (cur == null) 0 else modes.indexOfFirst { it.key == cur }.let { if (it < 0) 0 else it + 1 }
+        val checked = if (cur == null) 0 else RES_TIERS.indexOfFirst { it.key == cur }.let { if (it < 0) 0 else it + 1 }
         AlertDialog.Builder(this).setTitle("Độ phân giải màn hình")
             .setSingleChoiceItems(labels.toTypedArray(), checked) { d, i ->
                 d.dismiss()
                 when {
-                    i == 0 -> { Apps.del(this, "dispmode"); applyDisplayMode(this); toast(this, "Đã về Tự động (theo TV)"); build() }
-                    i <= modes.size -> {
-                        Apps.putStr(this, "dispmode", modes[i - 1].key); applyDisplayMode(this); build()
-                        toast(this, "Đã xin TV chuyển sang ${modes[i - 1].label.replace("  ", " ")} khi ở TV Launcher. TV không hỗ trợ thì giữ nguyên.")
-                    }
+                    i == 0 -> { Apps.del(this, "dispmode"); applyDisplayMode(this); build(); toast(this, "Thành công: đã về Tự động (theo TV)") }
+                    i <= RES_TIERS.size -> pickTier(RES_TIERS[i - 1])
                     else -> resolutionHelp()
                 }
             }.show()
     }
 
+    private fun pickTier(t: ResTier) {
+        val m = modeForTier(this, t.key)
+        if (m == null) { toast(this, "Thất bại: TV không báo hỗ trợ ${t.label}. Giữ nguyên như cũ."); return }
+        Apps.putStr(this, "dispmode", t.key); applyDisplayMode(this); build()
+        // TV cần một lúc để đổi chế độ, đợi rồi kiểm tra xem đã đổi thật chưa
+        Handler(Looper.getMainLooper()).postDelayed({
+            if (isFinishing) return@postDelayed
+            val now = currentModeId()
+            if (now == m.id) toast(this, "Thành công: TV đã chuyển sang ${t.label} (${m.w}x${m.h}, ${m.hz.toInt()}Hz)")
+            else toast(this, "Thất bại: đã xin ${t.label} nhưng TV chưa đổi. TV có thể không cho ứng dụng đổi, hãy xem mục \"Vì sao TV 4K chỉ hiện Full HD?\".")
+        }, 1800)
+    }
+
+    @Suppress("DEPRECATION")
+    private fun currentModeId(): Int = if (Build.VERSION.SDK_INT >= 23) try { windowManager.defaultDisplay.mode.modeId } catch (e: Exception) { -1 } else -1
+
     private fun resolutionHelp() {
         AlertDialog.Builder(this).setTitle("Vì sao TV 4K chỉ hiện Full HD?").setMessage(
             "Nhiều TV Android (Xiaomi, TCL, Sony...) vẽ giao diện ở Full HD 1920x1080 rồi tự phóng lên 4K khi hiển thị, nên ứng dụng chỉ đọc được 1920x1080. " +
             "Đây không phải lỗi của TV Launcher. Phim/video 4K trong YouTube, Netflix... vẫn phát đúng 4K.\n\n" +
-            "Ứng dụng không tự đổi được độ phân giải giao diện của hệ thống. Các chế độ trong danh sách là chế độ TV báo cho ứng dụng; " +
-            "chọn một chế độ chỉ là xin TV đổi khi đang ở TV Launcher. Nếu danh sách chỉ có một dòng nghĩa là TV không cho đổi.\n\n" +
+            "Ứng dụng không tự đổi được độ phân giải giao diện của hệ thống. Chọn Full HD / 2K / 4K chỉ là xin TV đổi chế độ xuất hình khi đang ở TV Launcher, " +
+            "và chỉ được với mức TV báo hỗ trợ. Mức nào ghi \"TV không hỗ trợ\" thì TV không cho đổi. Sau khi chọn, ứng dụng sẽ báo thành công hoặc thất bại.\n\n" +
             "Muốn ép giao diện hệ thống lên 4K (có thể làm TV giật, lag), dùng ADB:\n" +
             "1) adb shell wm density   (xem số hiện tại, ví dụ 240)\n" +
             "2) adb shell wm size 3840x2160\n" +
@@ -528,12 +548,12 @@ class SettingsActivity : VActivity() {
                 if (checked.none { it }) { toast(this, "Chưa tích giao diện nào để chặn"); return@setPositiveButton }
                 Apps.putStr(this, "hg_off", apps.filterIndexed { i, _ -> !checked[i] }.joinToString(",") { it.first })
                 Apps.putBool(this, "hg_on", true); HomeGuard.refresh()
-                val ok = HomeGuard.enableService(this)
+                HomeGuard.enableService(this)
                 build()
-                if (ok) toast(this, "Đã bật chặn") else guardEnableDialog()
+                verifyGuard()
             }
             .setNegativeButton("Đóng", null)
-        if (on) b.setNeutralButton("Tắt chặn") { _, _ -> Apps.putBool(this, "hg_on", false); HomeGuard.refresh(); build() }
+        if (on) b.setNeutralButton("Tắt chặn") { _, _ -> Apps.putBool(this, "hg_on", false); HomeGuard.refresh(); build(); toast(this, "Đã tắt chặn về giao diện gốc") }
         b.show()
     }
 
@@ -551,11 +571,33 @@ class SettingsActivity : VActivity() {
                 "adb shell settings put secure enabled_accessibility_services $comp\n" +
                 "adb shell settings put secure accessibility_enabled 1\n\n" +
                 "Nên cấp thêm quyền \"Hiển thị trên ứng dụng khác\" (mục Quyền ứng dụng) để việc chuyển về TV Launcher ổn định.")
-            .setPositiveButton("Mở cài đặt trợ năng") { _, _ -> refreshOnBack = true; openAccessibilitySettings() }
-            .setNeutralButton("Thử bật lại") { _, _ ->
-                if (HomeGuard.enableService(this)) toast(this, "Đã bật chặn")
-                else toast(this, if (HomeGuard.canWriteSecure(this)) "Chưa bật được, thử lại sau" else "Chưa cấp quyền WRITE_SECURE_SETTINGS bằng ADB")
-                build() }
+            .setPositiveButton("Mở cài đặt trợ năng") { _, _ -> refreshOnBack = true; guardCheckOnBack = true; openAccessibilitySettings() }
+            .setNeutralButton("Thử bật lại") { _, _ -> HomeGuard.enableService(this); build(); verifyGuard() }
+            .setNegativeButton("Đóng", null).show()
+    }
+
+    /** Báo kết quả bật chặn: thành công khi dịch vụ trợ năng đã chạy thật. Nếu dịch vụ đã được ghi vào cài đặt mà hệ thống chưa kết nối thì đợi tối đa ~3 giây */
+    private fun verifyGuard(tries: Int = 6) {
+        if (isFinishing) return
+        if (HomeGuard.running()) { build(); toast(this, "Thành công: đang chặn về giao diện gốc của TV"); return }
+        if (tries > 0 && HomeGuard.serviceEnabled(this)) {
+            Handler(Looper.getMainLooper()).postDelayed({ verifyGuard(tries - 1) }, 500)
+            return
+        }
+        build()
+        guardFailDialog()
+    }
+
+    private fun guardFailDialog() {
+        val why = when {
+            !HomeGuard.serviceEnabled(this) && !HomeGuard.canWriteSecure(this) ->
+                "Dịch vụ trợ năng chưa bật, và TV Launcher chưa được cấp quyền WRITE_SECURE_SETTINGS (chỉ cấp được bằng ADB) nên không tự bật được."
+            !HomeGuard.serviceEnabled(this) -> "TV Launcher đã có quyền nhưng hệ thống không cho bật dịch vụ trợ năng."
+            else -> "Dịch vụ đã được bật trong cài đặt nhưng hệ thống chưa chạy nó. Thử tắt rồi bật lại, hoặc khởi động lại TV."
+        }
+        AlertDialog.Builder(this).setTitle("Thất bại: chưa bật được chặn")
+            .setMessage("$why\n\nChặn chỉ hoạt động khi dịch vụ trợ năng đang chạy.")
+            .setPositiveButton("Xem hướng dẫn") { _, _ -> guardEnableDialog() }
             .setNegativeButton("Đóng", null).show()
     }
 
@@ -585,22 +627,40 @@ class SettingsActivity : VActivity() {
      *  Android không cho ứng dụng tự đặt âm thầm, nên thử lần lượt: hộp thoại của hệ thống (Android 10+),
      *  màn hình "ứng dụng màn hình chính" của TV, cuối cùng là hướng dẫn làm tay */
     private fun setDefaultHome() {
+        try { setDefaultHomeInner() } catch (e: Exception) {
+            refreshOnBack = false; homeCheckOnBack = false; HomeGuard.resume()
+            toast(this, "Thất bại: không mở được màn hình đặt giao diện mặc định. Làm theo hướng dẫn thủ công.")
+            homeGuide(defaultHomePkg(this))
+        }
+    }
+
+    private fun setDefaultHomeInner() {
         val cur = defaultHomePkg(this)
         if (cur == packageName) { toast(this, "TV Launcher đã là giao diện mặc định. Nút Home trên điều khiển sẽ mở TV Launcher."); return }
+        // Đang đổi giao diện mặc định trong màn hình hệ thống: tạm dừng chặn (đang bật trợ năng mà không tạm dừng thì bị kéo về giữa chừng,
+        // màn hình Cài đặt bị đóng nên bấm vào như không có tác dụng). Quay lại Cài đặt thì chặn chạy lại
+        HomeGuard.allow(120000L)
         if (Build.VERSION.SDK_INT >= 29) {
             try {
                 val rm = getSystemService(Context.ROLE_SERVICE) as android.app.role.RoleManager
                 if (rm.isRoleAvailable(android.app.role.RoleManager.ROLE_HOME) && !rm.isRoleHeld(android.app.role.RoleManager.ROLE_HOME)) {
-                    refreshOnBack = true
+                    refreshOnBack = true; homeCheckOnBack = true
                     startActivityForResult(rm.createRequestRoleIntent(android.app.role.RoleManager.ROLE_HOME), REQ_HOME)
                     return
                 }
-            } catch (e: Exception) { refreshOnBack = false }
+            } catch (e: Exception) { refreshOnBack = false; homeCheckOnBack = false }
         }
-        refreshOnBack = true
+        refreshOnBack = true; homeCheckOnBack = true
         if (safeStart(this, Intent(Settings.ACTION_HOME_SETTINGS))) { toast(this, "Hãy chọn TV Launcher trong danh sách"); return }
-        refreshOnBack = false
+        refreshOnBack = false; homeCheckOnBack = false
+        HomeGuard.resume()
         homeGuide(cur)
+    }
+
+    /** Quay lại từ màn hình chọn giao diện mặc định: báo đã đặt được hay chưa */
+    private fun reportDefaultHome() {
+        if (defaultHomePkg(this) == packageName) toast(this, "Thành công: TV Launcher đã là giao diện mặc định")
+        else toast(this, "Chưa thành công: TV Launcher chưa là giao diện mặc định. Bấm lại, hoặc làm theo hướng dẫn thủ công.")
     }
 
     private fun homeGuide(cur: String?) {
@@ -614,9 +674,9 @@ class SettingsActivity : VActivity() {
             .setNeutralButton("Cài đặt hệ thống") { _, _ -> openSystemSettings(this) }
             .setNegativeButton("Đóng", null)
         if (none) b.setPositiveButton("Mở màn hình chọn") { _, _ ->
-            refreshOnBack = true
+            refreshOnBack = true; HomeGuard.allow(120000L)
             if (!safeStart(this, Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME))) toast(this, "TV không mở được màn hình chọn")
-        } else b.setPositiveButton("Mở thông tin giao diện hiện tại") { _, _ -> refreshOnBack = true; openDetails(this, cur!!, "Chọn Xoá mặc định / Clear defaults") }
+        } else b.setPositiveButton("Mở thông tin giao diện hiện tại") { _, _ -> refreshOnBack = true; HomeGuard.allow(120000L); openDetails(this, cur!!, "Chọn Xoá mặc định / Clear defaults") }
         b.show()
     }
 
