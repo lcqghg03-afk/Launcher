@@ -440,7 +440,7 @@ fun appView(c: Context, a: AppItem, inGrid: Boolean = false, mult: Float = 1f, o
     addView(ImageView(c).apply { setImageDrawable(a.icon); layoutParams = LinearLayout.LayoutParams(c.dp((72 * sc).toInt()), c.dp((72 * sc).toInt()))
         clipToOutline = true
         outlineProvider = object : ViewOutlineProvider() { override fun getOutline(v: View, o: Outline) { o.setRoundRect(0, 0, v.width, v.height, c.dp(Apps.radius(c)).toFloat()) } } })
-    addView(TextView(c).apply { text = a.label; setTextColor(Color.WHITE); textSize = 13f * sc * Apps.fs(c); maxLines = 1; gravity = Gravity.CENTER; if (inGrid) shade() })
+    addView(TextView(c).apply { text = a.label; setTextColor(Apps.int(c, TEXT_APPS, Color.WHITE)); textSize = 13f * sc * Apps.fs(c); maxLines = 1; gravity = Gravity.CENTER; if (inGrid) shade() })
     // Nền có khai báo trạng thái "được chọn" + tắt vệt sáng mặc định: hệ thống không còn vẽ ô màu cam đè lên hình ứng dụng
     if (!inGrid) {
         background = StateListDrawable().apply {
@@ -494,6 +494,10 @@ const val ZONE_PANEL = "panel_color"
 const val ZONE_APPS = "apps_color"
 const val ZONE_MENU = "menu_color"
 const val ZONE_CW = "cw_color"
+const val TEXT_PANEL = "panel_text_color"
+const val TEXT_APPS = "apps_text_color"
+const val TEXT_MENU = "menu_text_color"
+const val TEXT_CW = "cw_text_color"
 val PANEL_DEFAULT = 0xFF101018.toInt()
 
 /** Khoá lưu màu tự build gần nhất của một vùng ("panel_custom" giữ như bản cũ) */
@@ -549,6 +553,7 @@ val PANEL_PRESETS: List<Pair<String, Int>> = listOf(
 
 /** Màu đang dùng của một vùng (xem ZONE_*) */
 fun zoneColor(c: Context, zone: String): Int = when (zone) {
+    TEXT_PANEL, TEXT_APPS, TEXT_MENU, TEXT_CW -> Apps.int(c, zone, Color.WHITE)
     ZONE_PANEL -> Apps.int(c, ZONE_PANEL, PANEL_DEFAULT)
     ZONE_CW -> Apps.int(c, ZONE_CW, 0)
     else -> Apps.int(c, zone, Apps.int(c, ZONE_PANEL, PANEL_DEFAULT))   // chưa chọn riêng thì theo "Màu nền bảng"
@@ -592,7 +597,7 @@ fun glassMenu(c: Context, title: String, labels: List<String>, focus: Int = 0, z
     val rows = ArrayList<TextView>()
     labels.forEachIndexed { i, l ->
         val t = TextView(c).apply {
-            text = l; textSize = 20f * fs; setTextColor(Color.WHITE)
+            text = l; textSize = 20f * fs; setTextColor(Apps.int(c, TEXT_MENU, Color.WHITE))
             setPadding(c.dp(16), c.dp(14), c.dp(16), c.dp(14))
             isFocusable = true; isClickable = true; noSysHighlight()
             background = StateListDrawable().apply {
@@ -609,7 +614,7 @@ fun glassMenu(c: Context, title: String, labels: List<String>, focus: Int = 0, z
         setPadding(c.dp(12), c.dp(12), c.dp(12), c.dp(12))
         background = glassPanel(c, true, zone)
         addView(TextView(c).apply {
-            text = title; textSize = 22f * fs; setTextColor(Color.WHITE); maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
+            text = title; textSize = 22f * fs; setTextColor(Apps.int(c, TEXT_MENU, Color.WHITE)); maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
             setPadding(c.dp(16), c.dp(8), c.dp(16), c.dp(12))
         })
         addView(ScrollView(c).apply { isVerticalScrollBarEnabled = false; addView(box) }, LinearLayout.LayoutParams(-1, -2))
@@ -828,16 +833,16 @@ class MainActivity : VActivity() {
         // Ô độc lập: giờ + ngày + âm lịch ở trên, thời tiết ở dưới. Phóng to/thu nhỏ bằng thanh gạt, không đụng tới thứ khác
         timeRow = LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL
-            addView(TextClock(this@MainActivity).apply { format24Hour = "HH:mm"; format12Hour = "HH:mm"; timeZone = Apps.tz(this@MainActivity); textSize = 26f; setTextColor(Color.WHITE) })
-            lunar = TextView(this@MainActivity).apply { textSize = 11f; setTextColor(Color.WHITE) }
+            addView(TextClock(this@MainActivity).apply { format24Hour = "HH:mm"; format12Hour = "HH:mm"; timeZone = Apps.tz(this@MainActivity); textSize = 26f; setTextColor(Apps.int(this@MainActivity, TEXT_CW, Color.WHITE)) })
+            lunar = TextView(this@MainActivity).apply { textSize = 11f; setTextColor(Apps.int(this@MainActivity, TEXT_CW, Color.WHITE)) }
             addView(LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.VERTICAL; setPadding(dp(8), 0, 0, 0)
-                addView(TextClock(this@MainActivity).apply { format24Hour = "EEEE, d 'tháng' M, yyyy"; format12Hour = format24Hour; timeZone = Apps.tz(this@MainActivity); textSize = 11f; setTextColor(Color.WHITE) })
+                addView(TextClock(this@MainActivity).apply { format24Hour = "EEEE, d 'tháng' M, yyyy"; format12Hour = format24Hour; timeZone = Apps.tz(this@MainActivity); textSize = 11f; setTextColor(Apps.int(this@MainActivity, TEXT_CW, Color.WHITE)) })
                 addView(lunar)
             })
         }
         weather = TextView(this).apply {
-            text = "Đang tải thời tiết…"; setTextColor(Color.WHITE); textSize = 15f; maxLines = 1
+            text = "Đang tải thời tiết…"; setTextColor(Apps.int(this@MainActivity, TEXT_CW, Color.WHITE)); textSize = 15f; maxLines = 1
             setPadding(0, dp(6), 0, 0)
         }
         cwBox = LinearLayout(this).apply {
@@ -1295,6 +1300,12 @@ class MainActivity : VActivity() {
     private fun applyTexts() {
         val fs = Apps.fs(this)
         weather.textSize = 15f * fs
+        val cwText = Apps.int(this, TEXT_CW, Color.WHITE)
+        weather.setTextColor(cwText)
+        (timeRow.getChildAt(0) as TextView).setTextColor(cwText)
+        val dateColumn = timeRow.getChildAt(1) as LinearLayout
+        (dateColumn.getChildAt(0) as TextView).setTextColor(cwText)
+        lunar.setTextColor(cwText)
         (timeRow.getChildAt(0) as TextView).textSize = 26f * fs
         val d = timeRow.getChildAt(1) as LinearLayout
         (d.getChildAt(0) as TextView).textSize = 11f * fs

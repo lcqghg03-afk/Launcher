@@ -312,6 +312,10 @@ class SettingsActivity : VActivity() {
         item("Màu nền Tất cả ứng dụng", zoneLabel(ZONE_APPS), false, null, { zoneReset(ZONE_APPS) }) { zoneColorDialog(ZONE_APPS, "Màu nền Tất cả ứng dụng") }
         item("Màu nền menu ấn giữ ứng dụng", zoneLabel(ZONE_MENU), false, null, { zoneReset(ZONE_MENU) }) { zoneColorDialog(ZONE_MENU, "Màu nền menu ấn giữ ứng dụng") }
         item("Màu nền giờ và thời tiết", zoneLabel(ZONE_CW), false, null, { zoneReset(ZONE_CW) }) { zoneColorDialog(ZONE_CW, "Màu nền giờ và thời tiết") }
+        item("Màu chữ trong Cài đặt", zoneLabel(TEXT_PANEL), false, null, { zoneReset(TEXT_PANEL) }) { zoneColorDialog(TEXT_PANEL, "Màu chữ trong Cài đặt") }
+        item("Màu chữ thư viện ứng dụng", zoneLabel(TEXT_APPS), false, null, { zoneReset(TEXT_APPS) }) { zoneColorDialog(TEXT_APPS, "Màu chữ thư viện ứng dụng") }
+        item("Màu chữ menu ấn giữ ứng dụng", zoneLabel(TEXT_MENU), false, null, { zoneReset(TEXT_MENU) }) { zoneColorDialog(TEXT_MENU, "Màu chữ menu ấn giữ ứng dụng") }
+        item("Màu chữ giờ và thời tiết", zoneLabel(TEXT_CW), false, null, { zoneReset(TEXT_CW) }) { zoneColorDialog(TEXT_CW, "Màu chữ giờ và thời tiết") }
         item("Khởi động cùng thiết bị", bootLabel(), false, null, { Apps.del(this, "boot_src", "boot", "boot_app") }) { bootDialog() }
         choice("Số cột ứng dụng", "cols", arrayOf("4", "5", "6", "7", "8"), 2)
         val clear = { Apps.del(this, "bg_uri", "bg_type") }
@@ -411,7 +415,7 @@ class SettingsActivity : VActivity() {
 
     // Chữ hiện ở dòng cài đặt màu của một vùng: tên màu có sẵn, hoặc "Tuỳ chỉnh #RRGGBB"
     private fun zoneLabel(zone: String): String {
-        if (zone != ZONE_PANEL && zone != ZONE_CW && !Apps.has(this, zone)) return "Theo màu nền bảng"
+        if (zone != ZONE_PANEL && zone != ZONE_CW && zone !in listOf(TEXT_PANEL, TEXT_APPS, TEXT_MENU, TEXT_CW) && !Apps.has(this, zone)) return "Theo màu nền bảng"
         val cur = zoneColor(this, zone)
         return PANEL_PRESETS.firstOrNull { it.second == cur }?.first ?: ("Tuỳ chỉnh #%06X".format(cur and 0xFFFFFF))
     }
@@ -427,12 +431,12 @@ class SettingsActivity : VActivity() {
     private fun zoneColorDialog(zone: String, title: String) {
         val me = this
         val cur = zoneColor(me, zone)
-        val explicit = zone == ZONE_PANEL || zone == ZONE_CW || Apps.has(me, zone)   // đã chọn màu riêng cho vùng này chưa
+        val explicit = zone == ZONE_PANEL || zone == ZONE_CW || zone in listOf(TEXT_PANEL, TEXT_APPS, TEXT_MENU, TEXT_CW) || Apps.has(me, zone)   // đã chọn màu riêng cho vùng này chưa
         val isPreset = PANEL_PRESETS.any { it.second == cur }
         var dlg: AlertDialog? = null
         var curView: View? = null
         val cells = ArrayList<PCell>()
-        if (zone != ZONE_PANEL && zone != ZONE_CW) cells.add(PCell("Theo màu nền bảng", zoneColor(me, ZONE_PANEL), 2))
+        if (zone != ZONE_PANEL && zone != ZONE_CW && zone !in listOf(TEXT_PANEL, TEXT_APPS, TEXT_MENU, TEXT_CW)) cells.add(PCell("Theo màu nền bảng", zoneColor(me, ZONE_PANEL), 2))
         PANEL_PRESETS.forEach { cells.add(PCell(it.first, it.second, 0)) }
         cells.add(PCell("Tuỳ chỉnh...", Apps.int(me, zoneCustomKey(zone), PANEL_DEFAULT), 1))
         val col = LinearLayout(me).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(4), dp(4), dp(4), dp(4)) }
@@ -649,8 +653,8 @@ class SettingsActivity : VActivity() {
             tag = title   // tên dòng, dùng để xếp abc trong build()
             gravity = Gravity.CENTER_VERTICAL; isFocusable = true; isClickable = true; noSysHighlight()
             setPadding(dp(24), dp(16), dp(24), dp(16))
-            addView(TextView(context).apply { text = title; textSize = 20f * Apps.fs(this@SettingsActivity); setTextColor(if (red) 0xFFFF4444.toInt() else Color.WHITE); shade() }, LinearLayout.LayoutParams(0, -2, 1f))
-            if (value != null) addView(TextView(context).apply { text = value; textSize = 18f; setTextColor(0xFFDDDDDD.toInt()); shade() })
+            addView(TextView(context).apply { text = title; textSize = 20f * Apps.fs(this@SettingsActivity); setTextColor(if (red) 0xFFFF4444.toInt() else Apps.int(this@SettingsActivity, TEXT_PANEL, Color.WHITE)); shade() }, LinearLayout.LayoutParams(0, -2, 1f))
+            if (value != null) addView(TextView(context).apply { text = value; textSize = 18f; setTextColor(Apps.int(this@SettingsActivity, TEXT_PANEL, 0xFFDDDDDD.toInt())); shade() })
             if (checked != null) addView(Switch(context).apply { isChecked = checked; isClickable = false; isFocusable = false })
             // Dòng đang chọn: có khung vuông trắng bao quanh để biết đang ở mục nào
             background = selectBg(this@SettingsActivity)
