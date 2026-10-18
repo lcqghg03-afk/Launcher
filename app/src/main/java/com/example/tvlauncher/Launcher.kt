@@ -439,15 +439,58 @@ fun sizeDialog(c: Context, key: String, title: String, onChange: () -> Unit) {
         .setSingleChoiceItems(arrayOf("Nhỏ", "Vừa", "Lớn"), Apps.size(c, key)) { d, i -> Apps.setSize(c, key, i); d.dismiss(); onChange() }.show()
 }
 
+/** Màu nền "kính" dùng cho bảng menu và màn hình Cài đặt: càng nhỏ phần alpha (2 số đầu) càng trong suốt */
+val GLASS_BG = 0x88101018.toInt()
+
+/** Bảng menu trong suốt (nhìn xuyên được màn hình phía sau), dòng đang chọn có khung vuông trắng bao quanh */
+fun glassMenu(c: Context, title: String, labels: List<String>, pick: (Int) -> Unit) {
+    val d = android.app.Dialog(c)
+    d.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
+    val fs = Apps.fs(c)
+    val box = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL }
+    val rows = ArrayList<TextView>()
+    labels.forEachIndexed { i, l ->
+        val t = TextView(c).apply {
+            text = l; textSize = 20f * fs; setTextColor(Color.WHITE)
+            setPadding(c.dp(16), c.dp(14), c.dp(16), c.dp(14))
+            isFocusable = true; isClickable = true
+            background = StateListDrawable().apply {
+                addState(intArrayOf(android.R.attr.state_focused), GradientDrawable().apply { setColor(0x33FFFFFF); setStroke(c.dp(3), Color.WHITE) })
+                addState(intArrayOf(), GradientDrawable().apply { setColor(0); setStroke(c.dp(3), 0) })
+            }
+            setOnClickListener { d.dismiss(); pick(i) }
+        }
+        rows.add(t)
+        box.addView(t, LinearLayout.LayoutParams(-1, -2).apply { setMargins(0, c.dp(2), 0, c.dp(2)) })
+    }
+    val col = LinearLayout(c).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(c.dp(12), c.dp(12), c.dp(12), c.dp(12))
+        background = GradientDrawable().apply { setColor(GLASS_BG); setStroke(c.dp(1), 0x66FFFFFF) }
+        addView(TextView(c).apply {
+            text = title; textSize = 22f * fs; setTextColor(Color.WHITE); maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
+            setPadding(c.dp(16), c.dp(8), c.dp(16), c.dp(12))
+        })
+        addView(ScrollView(c).apply { isVerticalScrollBarEnabled = false; addView(box) }, LinearLayout.LayoutParams(-1, -2))
+    }
+    d.setContentView(col)
+    d.window?.apply {
+        setBackgroundDrawable(android.graphics.drawable.ColorDrawable(0))
+        clearFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+        setDimAmount(0f)
+        setLayout(c.dp(520), android.view.WindowManager.LayoutParams.WRAP_CONTENT)
+        setGravity(Gravity.CENTER)
+    }
+    d.show()
+    rows.firstOrNull()?.requestFocus()
+}
+
 fun showMenu(c: Context, a: AppItem, onChange: () -> Unit) {
     val fav = a.pkg in Apps.favs(c)
     val labels = ArrayList<String>(); val acts = ArrayList<() -> Unit>()
     fun row(l: String, f: () -> Unit) { labels.add(l); acts.add(f) }
     fun toggleFav() { val l = Apps.favs(c).toMutableList(); if (fav) l.remove(a.pkg) else l.add(a.pkg); Apps.setFavs(c, l); onChange() }
-    if (fav) row("Xoá khỏi mục Yêu thích") { toggleFav() }
-    row("Mở ứng dụng") { openApp(c, a) }
-    if (!fav) row("Thêm vào mục Yêu thích") { toggleFav() }
-    row("Thêm vào mục tuỳ chỉnh…") { secPickAdd(c, a, onChange) }
+    row(if (fav) "Xoá khỏi mục Yêu thích" else "Thêm vào mục Yêu thích") { toggleFav() }
     row("Tuỳ chỉnh kích thước") { sizeDialog(c, a.pkg, a.label, onChange) }
     row("Ẩn ứng dụng") { Apps.setHidden(c, a.pkg, true); onChange() }
     row(if (Apps.isLocked(c, a.pkg)) "Mở khoá ứng dụng" else "Khoá ứng dụng") {
@@ -457,10 +500,10 @@ fun showMenu(c: Context, a: AppItem, onChange: () -> Unit) {
     row("Cấp quyền ứng dụng") { openPerms(c, a.pkg) }
     row("Xoá dữ liệu ứng dụng") { guard(c) { openDetails(c, a.pkg, "Chọn Bộ nhớ rồi bấm Xoá dữ liệu") } }
     row("Xem thông tin ứng dụng") { openDetails(c, a.pkg, null) }
-    row("Gỡ cài đặt (xoá) ứng dụng") {
+    row("Xoá ứng dụng") {
         guard(c) { if (!safeStart(c, Intent(Intent.ACTION_DELETE, Uri.parse("package:${a.pkg}")))) Toast.makeText(c, "TV không cho gỡ ứng dụng ở đây", Toast.LENGTH_LONG).show() }
     }
-    AlertDialog.Builder(c).setTitle(a.label).setItems(labels.toTypedArray()) { _, i -> acts[i]() }.show()
+    glassMenu(c, a.label, labels) { acts[it]() }
 }
 
 /** Menu cho widget / giờ / hàng yêu thích / hàng đầu vào: đổi kích thước, chuyển lên/xuống, ẩn */
@@ -522,8 +565,8 @@ class MainActivity : VActivity() {
 
         // Trái: trợ lý giọng nói + lưới tất cả ứng dụng
         val left = LinearLayout(this).apply {
-            addView(iconBtn(R.drawable.ic_mic, "Trợ lý giọng nói") { voice() })
-            addView(iconBtn(R.drawable.ic_apps, "Tất cả ứng dụng") { safeStart(this@MainActivity, Intent(this@MainActivity, AllAppsActivity::class.java)) })
+            addView(iconBtn(R.drawable.ic_mic, "Trợ lý giọng nói", "@voice") { voice() })
+            addView(iconBtn(R.drawable.ic_apps, "Tất cả ứng dụng", "@voice") { safeStart(this@MainActivity, Intent(this@MainActivity, AllAppsActivity::class.java)) })
         }
         leftRow = left
         root.addView(left, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START).apply { setMargins(dp(40), dp(24), 0, 0) })
@@ -531,8 +574,8 @@ class MainActivity : VActivity() {
         // Phải trên cùng: Wi-Fi + cài đặt. Đứng yên một chỗ, không bị ô giờ/thời tiết ảnh hưởng
         val icons = LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL
-            addView(iconBtn(R.drawable.ic_wifi, "Wi-Fi") { if (!safeStart(this@MainActivity, Intent(Settings.ACTION_WIFI_SETTINGS))) openSystemSettings(this@MainActivity) })
-            addView(iconBtn(R.drawable.ic_settings, "Cài đặt") { settingsMenu() })
+            addView(iconBtn(R.drawable.ic_wifi, "Wi-Fi", "@net") { if (!safeStart(this@MainActivity, Intent(Settings.ACTION_WIFI_SETTINGS))) openSystemSettings(this@MainActivity) })
+            addView(iconBtn(R.drawable.ic_settings, "Cài đặt", "@net") { settingsMenu() })
         }
         iconsRow = icons
         root.addView(icons, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.END).apply { setMargins(0, dp(24), dp(40), 0) })
@@ -589,6 +632,10 @@ class MainActivity : VActivity() {
         // Cuộn dọc được: nhiều mục thì màn hình cuộn theo ô đang chọn, không tràn ra ngoài. Chừa phía trên cho ô giờ + thời tiết
         bottomScroll = ScrollView(this).apply { isFocusable = false; isVerticalScrollBarEnabled = false; overScrollMode = View.OVER_SCROLL_NEVER; addView(bottomCol) }
         root.addView(bottomScroll, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM).apply { setMargins(dp(40), dp(180), dp(40), dp(40)) })
+        // Khi kích cỡ một khối đổi (ví dụ thời tiết vừa tải xong), đặt lại điểm neo phóng to về đúng góc ngoài của khối
+        for (k in listOf("@voice", "@net", "@clock")) topBlock(k).addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
+            v.pivotX = if (onLeft(k)) 0f else v.width.toFloat(); v.pivotY = 0f
+        }
         setContentView(root)
         left.getChildAt(1).requestFocus()
     }
@@ -634,9 +681,101 @@ class MainActivity : VActivity() {
         timeRow.visibility = if (hideClock) View.GONE else View.VISIBLE
         weather.visibility = if (hideWeather) View.GONE else View.VISIBLE
         cwBox.visibility = if (hideClock && hideWeather) View.GONE else View.VISIBLE
-        val s = Apps.scale(this, "@clock").coerceAtMost(maxScale()); cwBox.scaleX = s; cwBox.scaleY = s
-        cwBox.pivotX = cwBox.width.toFloat(); cwBox.pivotY = 0f
-        cwBox.post { cwBox.pivotX = cwBox.width.toFloat(); cwBox.pivotY = 0f }
+        applyTop()
+    }
+
+    // ---- Ba khối ở hàng trên cùng, mỗi khối độc lập: "@voice" = Mic + Tất cả ứng dụng, "@net" = Wi-Fi + Cài đặt, "@clock" = Giờ + thời tiết ----
+    // Mỗi khối có riêng: bên trái/phải, cỡ (phóng hình quanh góc ngoài nên không đẩy khối khác) và khoá
+    private fun topBlock(key: String): View = when (key) { "@voice" -> leftRow; "@net" -> iconsRow; else -> cwBox }
+    private fun blockName(key: String) = when (key) { "@voice" -> "Mic và Tất cả ứng dụng"; "@net" -> "Wi-Fi và Cài đặt"; else -> "Giờ và thời tiết" }
+    private fun lockKey(key: String) = if (key == "@clock") "cw_lock" else "lock_$key"
+    // Mặc định: Mic + Tất cả ứng dụng bên trái; Wi-Fi + Cài đặt và Giờ + thời tiết bên phải (như bản cũ)
+    private fun onLeft(key: String) = (Apps.str(this, "pos_$key") ?: if (key == "@voice") "L" else "R") == "L"
+
+    private fun placeTop(v: View, left: Boolean, outer: Int, top: Int, s: Float) {
+        val lp = v.layoutParams as FrameLayout.LayoutParams
+        lp.gravity = Gravity.TOP or (if (left) Gravity.START else Gravity.END)
+        lp.setMargins(if (left) outer else 0, top, if (left) 0 else outer, 0)
+        v.layoutParams = lp
+        v.scaleX = s; v.scaleY = s
+        v.pivotX = if (left) 0f else v.width.toFloat(); v.pivotY = 0f
+    }
+
+    private fun applyTop() {
+        val margin = dp(40); val gap = dp(8)
+        var clockTopL = dp(24); var clockTopR = dp(24)
+        for (left in listOf(true, false)) {
+            // Khối vốn thuộc bên này nằm sát mép ngoài, khối kia đứng kế bên (không chồng lên nhau)
+            val outerKey = if (left) "@voice" else "@net"
+            val keys = listOf("@voice", "@net").filter { onLeft(it) == left }.sortedBy { if (it == outerKey) 0 else 1 }
+            var off = 0; var maxH = 0
+            for (k in keys) {
+                val v = topBlock(k)
+                v.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
+                val s = Apps.scale(this, k).coerceIn(0.5f, 3f)
+                placeTop(v, left, margin + off, dp(24), s)
+                off += (v.measuredWidth * s).toInt() + gap
+                maxH = maxOf(maxH, (v.measuredHeight * s).toInt())
+            }
+            // Ô giờ + thời tiết nằm ngay dưới hàng nút của bên mình; bên nào không có nút thì lên sát mép trên
+            val top = if (keys.isEmpty()) dp(24) else maxOf(dp(84), dp(24) + maxH + dp(12))
+            if (left) clockTopL = top else clockTopR = top
+        }
+        val cl = onLeft("@clock")
+        placeTop(cwBox, cl, margin, if (cl) clockTopL else clockTopR, Apps.scale(this, "@clock").coerceAtMost(maxScale()))
+    }
+
+    private fun moveBlock(key: String) {
+        if (Apps.bool(this, lockKey(key), false)) { Toast.makeText(this, "Đang khoá, hãy mở khoá trước", Toast.LENGTH_SHORT).show(); return }
+        Apps.putStr(this, "pos_$key", if (onLeft(key)) "R" else "L"); applyTop()
+    }
+
+    // Nhấn giữ một nút ở hàng trên: menu riêng của khối chứa nút đó
+    private fun groupMenu(key: String) {
+        if (!Apps.bool(this, "pick", true)) return
+        val locked = Apps.bool(this, lockKey(key), false)
+        glassMenu(this, blockName(key), listOf(
+            if (onLeft(key)) "Chuyển sang góc phải" else "Chuyển sang góc trái",
+            "Kích thước…",
+            if (locked) "Mở khoá vị trí và kích thước" else "Khoá vị trí và kích thước")) { i ->
+            when (i) {
+                0 -> moveBlock(key)
+                1 -> groupSizeDialog(key)
+                else -> { Apps.putBool(this, lockKey(key), !locked); Toast.makeText(this, if (locked) "Đã mở khoá" else "Đã khoá", Toast.LENGTH_SHORT).show() }
+            }
+        }
+    }
+
+    // Thanh gạt cỡ + ô khoá cho Mic/Tất cả ứng dụng và Wi-Fi/Cài đặt. Chỉ lưu khi bấm "Lưu", huỷ thì trả lại cỡ cũ
+    private fun groupSizeDialog(key: String) {
+        val c = this
+        val old = Apps.scale(c, key)
+        val locked = Apps.bool(c, lockKey(key), false)
+        val lo = 0.5f; val hi = 3f
+        val col = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(24), dp(16), dp(24), 0) }
+        col.addView(TextView(c).apply { text = "Kích thước: gạt trái = nhỏ, gạt phải = lớn" })
+        val bar = SeekBar(c).apply {
+            max = 100; keyProgressIncrement = 5
+            progress = (((old.coerceIn(lo, hi) - lo) / (hi - lo)) * 100).toInt().coerceIn(0, 100)
+            isEnabled = !locked
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(sb: SeekBar, p: Int, fromUser: Boolean) {
+                    if (fromUser) { Apps.setScale(c, key, lo + (hi - lo) * p / 100f); applyTop() }
+                }
+                override fun onStartTrackingTouch(sb: SeekBar) {}
+                override fun onStopTrackingTouch(sb: SeekBar) {}
+            })
+        }
+        col.addView(bar)
+        val lockCb = CheckBox(c).apply { text = "Khoá vị trí và kích thước (tránh đổi nhầm)"; isChecked = locked; setPadding(0, dp(12), 0, 0) }
+        lockCb.setOnCheckedChangeListener { _, on -> bar.isEnabled = !on }
+        col.addView(lockCb)
+        val revert = { Apps.setScale(c, key, old); applyTop() }
+        AlertDialog.Builder(c).setTitle(blockName(key)).setView(col)
+            .setPositiveButton("Lưu") { _, _ -> Apps.putBool(c, lockKey(key), lockCb.isChecked); Toast.makeText(c, "Đã lưu", Toast.LENGTH_SHORT).show() }
+            .setNegativeButton("Huỷ") { _, _ -> revert() }
+            .setOnCancelListener { revert() }
+            .show()
     }
 
     // Đổ bóng chữ để vẫn đọc rõ khi nền trong suốt
@@ -703,7 +842,7 @@ class MainActivity : VActivity() {
             })
         }
         col.addView(bar)
-        val lockCb = CheckBox(c).apply { text = "Khoá kích thước (tránh đổi nhầm)"; isChecked = oldLock; setPadding(0, dp(12), 0, 0) }
+        val lockCb = CheckBox(c).apply { text = "Khoá vị trí và kích thước (tránh đổi nhầm)"; isChecked = oldLock; setPadding(0, dp(12), 0, 0) }
         lockCb.setOnCheckedChangeListener { _, on -> bar.isEnabled = !on }
         col.addView(lockCb)
         val revert = { Apps.setScale(c, "@clock", oldScale); applyBox() }
@@ -836,14 +975,18 @@ class MainActivity : VActivity() {
 
     private fun boxMenu() {
         val locked = Apps.bool(this, "cw_lock", false)
-        AlertDialog.Builder(this).setTitle("Giờ và thời tiết")
-            .setItems(arrayOf("Chọn nơi ở và kích thước", if (locked) "Mở khoá kích thước" else "Khoá kích thước", "Ẩn mục này")) { _, i ->
-                when (i) {
-                    0 -> boxSettings()
-                    1 -> { Apps.putBool(this, "cw_lock", !locked); Toast.makeText(this, if (locked) "Đã mở khoá" else "Đã khoá", Toast.LENGTH_SHORT).show() }
-                    else -> { Apps.setHidden(this, "@clock", true); Apps.setHidden(this, "@weather", true); applyAll() }
-                }
-            }.show()
+        glassMenu(this, "Giờ và thời tiết", listOf(
+            "Chọn nơi ở và kích thước",
+            if (onLeft("@clock")) "Chuyển sang góc phải" else "Chuyển sang góc trái",
+            if (locked) "Mở khoá vị trí và kích thước" else "Khoá vị trí và kích thước",
+            "Ẩn mục này")) { i ->
+            when (i) {
+                0 -> boxSettings()
+                1 -> moveBlock("@clock")
+                2 -> { Apps.putBool(this, "cw_lock", !locked); Toast.makeText(this, if (locked) "Đã mở khoá" else "Đã khoá", Toast.LENGTH_SHORT).show() }
+                else -> { Apps.setHidden(this, "@clock", true); Apps.setHidden(this, "@weather", true); applyAll() }
+            }
+        }
     }
 
     // Cỡ chữ của giờ, ngày, lịch âm và thời tiết theo cỡ chữ chung
@@ -901,13 +1044,15 @@ class MainActivity : VActivity() {
     }
 
     // Thứ tự di chuyển cố định (không phụ thuộc cách Android tự đoán):
-    // Mic -> Tất cả ứng dụng -> Wi-Fi -> Cài đặt -> Giờ/ngày/thời tiết -> từng ô trong các mục tuỳ chỉnh -> từng ứng dụng yêu thích
+    // (mặc định) Mic -> Tất cả ứng dụng -> Wi-Fi -> Cài đặt -> Giờ/ngày/thời tiết -> từng ô trong các mục tuỳ chỉnh -> từng ứng dụng yêu thích
     // -> từng cổng vào. Các tiêu đề (Yêu thích, Đầu vào) bị bỏ qua, chỉ dừng ở ô có thể bấm. Nếu đã đổi vị trí hàng Đầu vào lên trên thì hai hàng cuối đổi chỗ cho khớp màn hình
     private fun focusOrder(): List<View> {
         val l = ArrayList<View>()
-        for (i in 0 until leftRow.childCount) l.add(leftRow.getChildAt(i))
-        for (i in 0 until iconsRow.childCount) l.add(iconsRow.getChildAt(i))
-        l.add(cwBox)
+        // Hàng trên: bên trái rồi bên phải; mỗi bên đi từ trái sang phải (Mic, Tất cả ứng dụng, Wi-Fi, Cài đặt), sau cùng là ô giờ + thời tiết của bên đó
+        for (left in listOf(true, false)) {
+            for (k in listOf("@voice", "@net")) if (onLeft(k) == left) { val g = topBlock(k) as LinearLayout; for (i in 0 until g.childCount) l.add(g.getChildAt(i)) }
+            if (onLeft("@clock") == left) l.add(cwBox)
+        }
         l.addAll(secCards)
         val blocks = if (Apps.inputsAbove(this)) listOf(inputBox to inputRow, favBox to favRow) else listOf(favBox to favRow, inputBox to inputRow)
         for ((_, row) in blocks) {
@@ -956,7 +1101,9 @@ class MainActivity : VActivity() {
         if (System.currentTimeMillis() - lastWeather > 600000L) loadWeather()
     }
 
-    override fun onPause() { super.onPause(); tick.removeCallbacks(tickR); releaseBg() }
+    override fun onPause() { super.onPause(); tick.removeCallbacks(tickR) }
+
+    override fun onStop() { super.onStop(); releaseBg() }
 
     private fun refreshLunar() {
         val z = Apps.tz(this)?.let { java.util.TimeZone.getTimeZone(it) } ?: java.util.TimeZone.getDefault()
@@ -1187,8 +1334,10 @@ class MainActivity : VActivity() {
         Toast.makeText(this, "Chưa có trợ lý giọng nói. Hãy cài Kiki, hoặc chọn trợ lý trong Cài đặt Home TV", Toast.LENGTH_LONG).show()
     }
 
-    private fun iconBtn(res: Int, desc: String, f: () -> Unit) = ImageButton(this).apply {
+    // key = khối chứa nút ("@voice" = Mic + Tất cả ứng dụng, "@net" = Wi-Fi + Cài đặt). Nhấn giữ nút để chuyển trái/phải, chỉnh cỡ, khoá
+    private fun iconBtn(res: Int, desc: String, key: String, f: () -> Unit) = ImageButton(this).apply {
         setImageResource(res); contentDescription = desc; background = focusBg(this@MainActivity); setPadding(dp(12), dp(12), dp(12), dp(12)); setOnClickListener { f() }
+        setOnLongClickListener { groupMenu(key); true }
     }
 }
 

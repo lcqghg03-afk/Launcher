@@ -214,7 +214,7 @@ class SettingsActivity : VActivity() {
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
         list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(120), dp(20), dp(120), dp(40)) }
-        scroll = ScrollView(this).apply { setBackgroundColor(0xFF101018.toInt()); addView(list) }
+        scroll = ScrollView(this).apply { setBackgroundColor(GLASS_BG); addView(list) }
         setContentView(scroll)
         build()
         if (Apps.str(this, "home_fail") != null) { Apps.del(this, "home_fail"); list.post { homeFailDialog() } }
@@ -452,11 +452,7 @@ class SettingsActivity : VActivity() {
     private fun bgLabel(type: String): String {
         val u = Apps.str(this, "bg_uri")
         if (u == null || Apps.str(this, "bg_type") != type) return "Chưa đặt"
-        if (type == "image") return "Đã đặt"
-        return try {
-            val r = MediaMetadataRetriever().apply { setDataSource(this@SettingsActivity, Uri.parse(u)) }
-            "Đã đặt (${r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)}x${r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)})"
-        } catch (e: Exception) { "Đã đặt" }
+        return if (type == "image") "Đặt ảnh nền thành công" else "Đặt video ảnh nền thành công"
     }
 
     // Thử trình chọn tệp của hệ thống; TV Xiaomi nội địa thường không có nên dùng trình duyệt tệp tích hợp
@@ -511,6 +507,7 @@ class SettingsActivity : VActivity() {
                 val f = entries[i - (if (up) 1 else 0)]
                 if (f.isDirectory) showDir(f, video) else {
                     Apps.putStr(this, "bg_uri", Uri.fromFile(f).toString()); Apps.putStr(this, "bg_type", if (video) "video" else "image"); build()
+                    toast(this, if (video) "Đặt video ảnh nền thành công" else "Đặt ảnh nền thành công")
                 }
             }
         }.setNegativeButton("Đóng", null).show()
@@ -522,6 +519,7 @@ class SettingsActivity : VActivity() {
         val u = d?.data ?: return
         try { contentResolver.takePersistableUriPermission(u, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (e: Exception) {}
         Apps.putStr(this, "bg_uri", u.toString()); Apps.putStr(this, "bg_type", if (rc == 2) "video" else "image"); build()
+        toast(this, if (rc == 2) "Đặt video ảnh nền thành công" else "Đặt ảnh nền thành công")
     }
 
     /** Trạng thái hiện ở cuối dòng "Chặn về giao diện gốc của TV" */
