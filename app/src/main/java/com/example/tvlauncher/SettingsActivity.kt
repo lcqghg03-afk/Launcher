@@ -131,6 +131,12 @@ fun recoverPin(c: Context, done: () -> Unit) {
     }
 }
 
+/** Gói của giao diện chính (nút Home) đang là mặc định. "android" = chưa đặt mặc định (hệ thống sẽ hỏi mỗi lần). null = không xác định được */
+fun defaultHomePkg(c: Context): String? = try {
+    val i = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
+    c.packageManager.resolveActivity(i, PackageManager.MATCH_DEFAULT_ONLY)?.activityInfo?.packageName
+} catch (e: Exception) { null }
+
 /** Nguồn khi bật TV: "off" | "app" (ứng dụng đã chọn, mặc định là TV Launcher) | "in:<id đầu vào>". Tương thích bản cũ (công tắc "boot") */
 fun bootSrc(c: Context): String = Apps.str(c, "boot_src") ?: if (Apps.bool(c, "boot", false)) "app" else "off"
 
@@ -168,6 +174,13 @@ class SettingsActivity : VActivity() {
     private lateinit var list: LinearLayout
     private lateinit var scroll: ScrollView
     private var pendingVideo = false
+    private val REQ_HOME = 3
+    private var refreshOnBack = false   // đã mở màn hình hệ thống (giao diện mặc định / trợ năng) => quay lại thì làm mới trạng thái
+
+    override fun onResume() {
+        super.onResume()
+        if (refreshOnBack) { refreshOnBack = false; build() }
+    }
 
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
@@ -214,6 +227,8 @@ class SettingsActivity : VActivity() {
         list.addView(TextView(this).apply { text = "TV Launcher"; textSize = 24f; setTextColor(0xFF4D6BFF.toInt()); setPadding(dp(24), 0, 0, dp(12)) })
         item("Giới thiệu", "v$APP_VERSION", false, null, null) { showAbout() }
         item("Hướng dẫn cho TV Xiaomi nội địa", null, false, null, null) { xiaomiHelp() }
+        item("Đặt làm giao diện mặc định", homeLabel(), false, null, null) { setDefaultHome() }
+        item("Chặn về giao diện gốc của TV", guardLabel(), false, null, { Apps.del(this, "hg_on", "hg_off"); HomeGuard.refresh() }) { guardDialog() }
         val dm = android.util.DisplayMetrics(); windowManager.defaultDisplay.getRealMetrics(dm)
         item("Độ phân giải màn hình", "${dm.widthPixels}x${dm.heightPixels}", false, null, null) { toast(this, "Đây là độ phân giải TV đang xuất ra. Nếu chữ quá to hoặc quá nhỏ, hãy chọn Kích cỡ TV bên dưới.") }
         choice("Kích cỡ TV", "tvsize", TV_SIZES, 0, true)
@@ -435,10 +450,105 @@ class SettingsActivity : VActivity() {
     }
 
     override fun onActivityResult(rc: Int, res: Int, d: Intent?) {
+        if (rc == REQ_HOME) return   // kết quả đặt giao diện mặc định: onResume sẽ làm mới trạng thái
         if (res != RESULT_OK) return
         val u = d?.data ?: return
         try { contentResolver.takePersistableUriPermission(u, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (e: Exception) {}
         Apps.putStr(this, "bg_uri", u.toString()); Apps.putStr(this, "bg_type", if (rc == 2) "video" else "image"); build()
+    }
+
+    /** Trạng thái hiện ở cuối dòng "Chặn về giao diện gốc của TV" */
+    private fun guardLabel(): String = when {
+        !Apps.bool(this, "hg_on", false) -> "Tắt"
+        HomeGuard.serviceEnabled(this) -> "Đang chặn"
+        else -> "Đã bật, chờ cấp quyền trợ năng"
+    }
+
+    /** Chọn giao diện gốc cần chặn (tích = chặn). Bật chặn xong mà chưa bật dịch vụ trợ năng thì hướng dẫn bật */
+    private fun guardDialog() {
+        val apps = HomeGuard.homeApps(this)
+        if (apps.isEmpty()) { toast(this, "TV không có giao diện chính nào khác để chặn"); return }
+        val off = HomeGuard.excluded(this)
+        val checked = BooleanArray(apps.size) { apps[it].first !in off }
+        val on = Apps.bool(this, "hg_on", false)
+        val b = AlertDialog.Builder(this).setTitle("Chặn về giao diện gốc (tích = chặn)")
+            .setMultiChoiceItems(apps.map { it.second + "  (" + it.first + ")" }.toTypedArray(), checked) { _, i, v -> checked[i] = v }
+            .setPositiveButton(if (on) "Lưu" else "Bật chặn") { _, _ ->
+                if (checked.none { it }) { toast(this, "Chưa tích giao diện nào để chặn"); return@setPositiveButton }
+                Apps.putStr(this, "hg_off", apps.filterIndexed { i, _ -> !checked[i] }.joinToString(",") { it.first })
+                Apps.putBool(this, "hg_on", true); HomeGuard.refresh()
+                build()
+                if (HomeGuard.serviceEnabled(this)) toast(this, "Đã bật chặn") else guardEnableDialog()
+            }
+            .setNegativeButton("Đóng", null)
+        if (on) b.setNeutralButton("Tắt chặn") { _, _ -> Apps.putBool(this, "hg_on", false); HomeGuard.refresh(); build() }
+        b.show()
+    }
+
+    private fun guardEnableDialog() {
+        val comp = "$packageName/${HomeGuardService::class.java.name}"
+        AlertDialog.Builder(this).setTitle("Bật dịch vụ trợ năng để chặn")
+            .setMessage(
+                "Android không cho ứng dụng tự chặn giao diện khác, nên cần bật dịch vụ trợ năng \"TV Launcher - Chặn giao diện gốc\". " +
+                "Dịch vụ chỉ biết giao diện nào đang hiện lên để đưa về TV Launcher, không đọc nội dung màn hình.\n\n" +
+                "Bấm \"Mở cài đặt trợ năng\", chọn dịch vụ trên rồi bật.\n\n" +
+                "Nếu TV không có màn hình trợ năng, dùng ADB trên máy tính (lệnh này ghi đè các dịch vụ trợ năng khác đang bật):\n" +
+                "adb shell settings put secure enabled_accessibility_services $comp\n" +
+                "adb shell settings put secure accessibility_enabled 1\n\n" +
+                "Nên cấp thêm quyền \"Hiển thị trên ứng dụng khác\" (mục Quyền ứng dụng) để việc chuyển về TV Launcher ổn định.")
+            .setPositiveButton("Mở cài đặt trợ năng") { _, _ ->
+                refreshOnBack = true
+                if (!safeStart(this, Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))) toast(this, "TV không có màn hình trợ năng") }
+            .setNegativeButton("Đóng", null).show()
+    }
+
+    /** Trạng thái hiện ở cuối dòng "Đặt làm giao diện mặc định" */
+    private fun homeLabel(): String {
+        val p = defaultHomePkg(this)
+        return when {
+            p == packageName -> "Đã là mặc định"
+            p == null || p == "android" -> "Chưa đặt"
+            else -> "Đang dùng: " + (try { packageManager.getApplicationLabel(packageManager.getApplicationInfo(p!!, 0)).toString() } catch (e: Exception) { p })
+        }
+    }
+
+    /** Đặt TV Launcher làm giao diện chính, để nút Home trên điều khiển mở thẳng TV Launcher.
+     *  Android không cho ứng dụng tự đặt âm thầm, nên thử lần lượt: hộp thoại của hệ thống (Android 10+),
+     *  màn hình "ứng dụng màn hình chính" của TV, cuối cùng là hướng dẫn làm tay */
+    private fun setDefaultHome() {
+        val cur = defaultHomePkg(this)
+        if (cur == packageName) { toast(this, "TV Launcher đã là giao diện mặc định. Nút Home trên điều khiển sẽ mở TV Launcher."); return }
+        if (Build.VERSION.SDK_INT >= 29) {
+            try {
+                val rm = getSystemService(Context.ROLE_SERVICE) as android.app.role.RoleManager
+                if (rm.isRoleAvailable(android.app.role.RoleManager.ROLE_HOME) && !rm.isRoleHeld(android.app.role.RoleManager.ROLE_HOME)) {
+                    refreshOnBack = true
+                    startActivityForResult(rm.createRequestRoleIntent(android.app.role.RoleManager.ROLE_HOME), REQ_HOME)
+                    return
+                }
+            } catch (e: Exception) { refreshOnBack = false }
+        }
+        refreshOnBack = true
+        if (safeStart(this, Intent(Settings.ACTION_HOME_SETTINGS))) { toast(this, "Hãy chọn TV Launcher trong danh sách"); return }
+        refreshOnBack = false
+        homeGuide(cur)
+    }
+
+    private fun homeGuide(cur: String?) {
+        val none = cur == null || cur == "android"
+        val b = AlertDialog.Builder(this).setTitle("Đặt TV Launcher làm giao diện mặc định")
+            .setMessage(
+                "TV này không có màn hình chọn giao diện chính, hãy làm theo 1 trong 2 cách:\n\n" +
+                (if (none) "Cách 1: bấm \"Mở màn hình chọn\" bên dưới, chọn TV Launcher rồi bấm \"Luôn\" (Always).\n\n"
+                 else "Cách 1: bấm \"Mở thông tin giao diện hiện tại\", chọn \"Xoá mặc định\" (Clear defaults). Sau đó bấm nút Home trên điều khiển, chọn TV Launcher rồi bấm \"Luôn\" (Always).\n\n") +
+                "Cách 2 (dùng máy tính, bật ADB trên TV):\nadb shell cmd package set-home-activity $packageName/.MainActivity")
+            .setNeutralButton("Cài đặt hệ thống") { _, _ -> openSystemSettings(this) }
+            .setNegativeButton("Đóng", null)
+        if (none) b.setPositiveButton("Mở màn hình chọn") { _, _ ->
+            refreshOnBack = true
+            if (!safeStart(this, Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME))) toast(this, "TV không mở được màn hình chọn")
+        } else b.setPositiveButton("Mở thông tin giao diện hiện tại") { _, _ -> refreshOnBack = true; openDetails(this, cur!!, "Chọn Xoá mặc định / Clear defaults") }
+        b.show()
     }
 
     private fun xiaomiHelp() {
@@ -478,7 +588,7 @@ class SettingsActivity : VActivity() {
     private fun permissionDialog() {
         val overlay = if (Build.VERSION.SDK_INT >= 23) Settings.canDrawOverlays(this) else true
         val b = AlertDialog.Builder(this).setTitle("Quyền ứng dụng")
-            .setMessage("• Truy cập Internet (thời tiết, gửi mã Gmail)\n• Xem danh sách ứng dụng đã cài\n• Gỡ cài đặt ứng dụng\n• Khởi động cùng thiết bị\n• Đọc bộ nhớ/USB (khi chọn ảnh, video nền)\n• Hiển thị trên ứng dụng khác (giúp tự khởi động ổn định): " +
+            .setMessage("• Truy cập Internet (thời tiết, gửi mã Gmail)\n• Xem danh sách ứng dụng đã cài\n• Gỡ cài đặt ứng dụng\n• Khởi động cùng thiết bị\n• Dịch vụ trợ năng (chỉ khi bật \"Chặn về giao diện gốc\")\n• Đọc bộ nhớ/USB (khi chọn ảnh, video nền)\n• Hiển thị trên ứng dụng khác (giúp tự khởi động ổn định): " +
                 (if (overlay) "đã cấp" else "chưa cấp"))
             .setNeutralButton("Cài đặt quyền") { _, _ ->
                 try { startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))) } catch (e: Exception) { toast(this, "TV không mở được màn hình này") } }

@@ -146,7 +146,7 @@ fun isXiaomi() = Build.MANUFACTURER.equals("xiaomi", true) || Build.BRAND.equals
 fun safeStart(c: Context, vararg list: Intent?): Boolean {
     for (i in list) {
         if (i == null) continue
-        try { if (c !is Activity) i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); c.startActivity(i); return true } catch (e: Exception) {}
+        try { if (c !is Activity) i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) else HomeGuard.allow(); c.startActivity(i); return true } catch (e: Exception) {}
     }
     return false
 }
@@ -298,6 +298,7 @@ object Apps {
     fun radius(c: Context) = intArrayOf(0, 12, 32)[int(c, "radius", 1)]
     fun tz(c: Context): String? = arrayOf<String?>(null, "Asia/Ho_Chi_Minh", "UTC", "Asia/Tokyo", "America/New_York", "Asia/Shanghai")[int(c, "tz", 1)]
     fun open(c: Context, pkg: String) {
+        HomeGuard.allow()   // người dùng chủ động mở: không chặn nhầm (kể cả khi đó là giao diện gốc của TV)
         val pm = c.packageManager
         val list = ArrayList<Intent>()
         pm.getLeanbackLaunchIntentForPackage(pkg)?.let { list.add(it) }
