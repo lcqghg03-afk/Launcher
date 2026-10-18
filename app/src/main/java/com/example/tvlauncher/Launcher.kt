@@ -193,7 +193,24 @@ fun applyDisplayMode(a: Activity) {
 
 open class VActivity : Activity() {
     override fun attachBaseContext(b: Context) { super.attachBaseContext(viCtx(b)) }
-    override fun onResume() { super.onResume(); applyDisplayMode(this); HomeGuard.ensure(this) }
+    override fun onResume() {
+        super.onResume(); applyDisplayMode(this); HomeGuard.ensure(this)
+        if (this !is SettingsActivity) reportPendingHome()
+    }
+
+    /** Người dùng vừa đi chọn giao diện mặc định ở màn hình hệ thống mà hệ thống mở thẳng TV Launcher (màn Cài đặt bị đóng):
+     *  báo luôn đã đặt được hay chưa. Thất bại thì lần sau mở Cài đặt sẽ hiện chi tiết */
+    private fun reportPendingHome() {
+        val t = Apps.str(this, "home_check") ?: return
+        Apps.del(this, "home_check")
+        if (System.currentTimeMillis() - (t.toLongOrNull() ?: 0L) > 180000L) return
+        HomeGuard.resume()
+        if (defaultHomePkg(this) == packageName) Toast.makeText(this, "Thành công: TV Launcher đã là giao diện mặc định", Toast.LENGTH_LONG).show()
+        else {
+            Apps.putStr(this, "home_fail", "1")
+            Toast.makeText(this, "Chưa thành công: TV Launcher chưa là giao diện mặc định. Vào Cài đặt để xem lý do và cách làm tiếp", Toast.LENGTH_LONG).show()
+        }
+    }
 }
 
 // Gói ứng dụng xem TV/nguồn tín hiệu của Xiaomi (thử lần lượt, gói nào có trên TV thì dùng)
