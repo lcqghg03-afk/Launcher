@@ -508,6 +508,7 @@ val PANEL_PRESETS: List<Pair<String, Int>> = listOf(
     "Trong suốt" to PANEL_GLASS,
     "Đen xanh (mặc định)" to PANEL_DEFAULT,
     "Đen" to 0xFF000000.toInt(),
+    "Trắng" to 0xFFFFFFFF.toInt(),
     "Xám than" to 0xFF2B2B33.toInt(),
     "Xám đá" to 0xFF3D4048.toInt(),
     "Xám xanh" to 0xFF37474F.toInt(),
@@ -665,7 +666,7 @@ fun glassify(d: AlertDialog, zone: String = ZONE_PANEL) {
         win.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(0))
         win.clearFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND)
         win.setDimAmount(0f)
-        win.setLayout(minOf(c.dp(640), (c.resources.displayMetrics.widthPixels * 0.85f).toInt()), android.view.WindowManager.LayoutParams.WRAP_CONTENT)
+        win.setLayout(minOf(c.dp(560), (c.resources.displayMetrics.widthPixels * 0.72f).toInt()), android.view.WindowManager.LayoutParams.WRAP_CONTENT)
         val decor = win.decorView
         val root: View = (if (ID_PANEL != 0) decor.findViewById<View>(ID_PANEL) else null)
             ?: decor.findViewById<android.view.ViewGroup>(android.R.id.content)?.getChildAt(0) ?: return
@@ -692,7 +693,7 @@ private fun glassTree(c: Context, v: View) {
         is Button -> { v.setTextColor(Color.WHITE); v.background = glassField(c); v.stateListAnimator = null; v.textSize = 18f * fs }
         is CheckedTextView -> { v.setTextColor(Color.WHITE); v.checkMarkTintList = white; v.shade() }
         is TextView -> {
-            if (v.id == ID_TITLE) v.textSize = 22f * fs else if (v.id == ID_MESSAGE) v.textSize = 18f * fs
+            if (v.id == ID_TITLE) v.textSize = 20f * fs else if (v.id == ID_MESSAGE) v.textSize = 16f * fs
             // Tiêu đề / nội dung của hộp thoại luôn trắng; chữ do app tự đặt màu thì chỉ đổi khi quá tối (chữ đen trên nền kính)
             if (v.id == ID_TITLE || v.id == ID_MESSAGE || lum(v.currentTextColor) < 0.4f) v.setTextColor(Color.WHITE)
             v.shade()
