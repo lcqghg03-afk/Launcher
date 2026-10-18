@@ -35,6 +35,9 @@ import java.net.URLEncoder
 import java.net.URL
 import kotlin.concurrent.thread
 
+/** Số phiên bản hiển thị trong Cài đặt (dòng Giới thiệu và hộp thoại Giới thiệu). Nhớ đổi versionName trong build.gradle.kts cho khớp */
+const val APP_VERSION = "1.7"
+
 /** Danh sách tỉnh/thành để chọn nơi hiển thị thời tiết thủ công (toạ độ xấp xỉ trung tâm) */
 val VN_PLACES = listOf(
     Triple("Hà Nội", 21.0285, 105.8542), Triple("TP. Hồ Chí Minh", 10.7769, 106.7009),
@@ -169,7 +172,7 @@ fun openSystemSettings(c: Context) {
 
 fun httpGet(u: String): String {
     val c = URL(u).openConnection() as java.net.HttpURLConnection
-    c.connectTimeout = 8000; c.readTimeout = 8000; c.setRequestProperty("User-Agent", "TVLauncher/1.3")
+    c.connectTimeout = 8000; c.readTimeout = 8000; c.setRequestProperty("User-Agent", "TVLauncher/$APP_VERSION")
     try { return c.inputStream.bufferedReader().readText() } finally { c.disconnect() }
 }
 
@@ -287,7 +290,7 @@ object Apps {
     /** Khôi phục TV Launcher về mặc định: xoá mọi cài đặt đã lưu (kể cả yêu thích, ứng dụng ẩn, ảnh nền, vị trí thời tiết...).
      *  Chỉ giữ lại mã PIN, Gmail khôi phục và danh sách ứng dụng đã khoá để không vô tình mở khoá ứng dụng */
     fun resetAll(c: Context) {
-        val keep = setOf("pin", "pin_mail", "locked", "tvsize_ver", "act_dev")
+        val keep = setOf("pin", "pin_len", "pin_mail", "locked", "tvsize_ver", "act_dev")
         val e = sp(c).edit()
         sp(c).all.keys.filter { it !in keep }.forEach { e.remove(it) }
         e.apply()
@@ -315,103 +318,11 @@ object Apps {
     }
 }
 
-/** Kênh thật trên màn hình chính: ứng dụng xem TV (VTV Go, FPT Play, YouTube...) tự đăng "kênh xem trước" lên TV Provider của hệ thống
- *  (cần Android 8.0 trở lên). Launcher đọc các kênh đó, người dùng chọn kênh nào hiện ở màn hình chính (khoá "tvc_show" lưu mã kênh).
- *  Cần quyền READ_TV_LISTINGS. Nếu TV không hiện hộp thoại cấp quyền thì cấp bằng adb (hướng dẫn nằm trong Cài đặt) */
-object TvChannels {
-    const val PERM = "android.permission.READ_TV_LISTINGS"
-    class Ch(val id: Long, val pkg: String, val name: String, val label: String)
-    class Prog(val title: String, val poster: String?, val intent: String, val ratio: Float, val pkg: String)
-
-    val pool: java.util.concurrent.ExecutorService = java.util.concurrent.Executors.newFixedThreadPool(3)
-    private val cache = object : android.util.LruCache<String, Bitmap>(24 * 1024 * 1024) { override fun sizeOf(k: String, v: Bitmap) = v.byteCount }
-
-    fun supported() = Build.VERSION.SDK_INT >= 26
-    fun granted(c: Context) = c.packageManager.checkPermission(PERM, c.packageName) == PackageManager.PERMISSION_GRANTED
-    fun usable(c: Context) = supported() && granted(c)
-
-    fun selected(c: Context): List<Long> = (Apps.str(c, "tvc_show") ?: "").split(",").mapNotNull { it.toLongOrNull() }
-    fun setSelected(c: Context, l: List<Long>) = Apps.putStr(c, "tvc_show", l.joinToString(","))
-
-    /** Mọi kênh "xem trước" do các ứng dụng đăng lên. Rỗng nếu chưa có quyền hoặc TV không hỗ trợ */
-    fun channels(c: Context): List<Ch> {
-        if (!usable(c)) return emptyList()
-        val pm = c.packageManager
-        val out = ArrayList<Ch>()
-        try {
-            c.contentResolver.query(android.media.tv.TvContract.Channels.CONTENT_URI, arrayOf("_id", "package_name", "type", "display_name"), null, null, null)?.use { q ->
-                while (q.moveToNext()) {
-                    if (q.getString(2) != android.media.tv.TvContract.Channels.TYPE_PREVIEW) continue
-                    val pkg = q.getString(1) ?: continue
-                    if (pkg == c.packageName) continue
-                    val app = try { pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString() } catch (e: Exception) { pkg }
-                    val name = q.getString(3)?.trim().orEmpty()
-                    out.add(Ch(q.getLong(0), pkg, name, if (name.isEmpty() || name == app) app else "$app · $name"))
-                }
-            }
-        } catch (e: Throwable) {}
-        return out
-    }
-
-    /** Các kênh đã chọn kèm danh sách nội dung của từng kênh (kênh nào đã bị gỡ thì bỏ qua) */
-    fun load(c: Context, ids: List<Long>): List<Pair<Ch, List<Prog>>> {
-        val all = channels(c).associateBy { it.id }
-        return ids.mapNotNull { all[it] }.map { it to programs(c, it) }
-    }
-
-    // TvProvider không cho lọc bằng selection, nên lấy hết rồi lọc/sắp xếp trong code
-    private fun programs(c: Context, ch: Ch): List<Prog> {
-        val out = ArrayList<Pair<Int, Prog>>()
-        try {
-            c.contentResolver.query(android.media.tv.TvContract.buildPreviewProgramsUriForChannel(ch.id),
-                arrayOf("title", "poster_art_uri", "thumbnail_uri", "intent_uri", "weight", "poster_art_aspect_ratio"), null, null, null)?.use { q ->
-                while (q.moveToNext() && out.size < 30) {
-                    val intent = q.getString(3) ?: continue
-                    val ratio = when (if (q.isNull(5)) 0 else q.getInt(5)) { 1 -> 1.5f; 2 -> 1.33f; 3 -> 1f; 4 -> 0.67f; 5 -> 0.7f; else -> 1.78f }
-                    out.add((if (q.isNull(4)) 0 else q.getInt(4)) to Prog(q.getString(0) ?: "", q.getString(1) ?: q.getString(2), intent, ratio, ch.pkg))
-                }
-            }
-        } catch (e: Throwable) {}
-        return out.sortedByDescending { it.first }.map { it.second }
-    }
-
-    /** Ảnh bìa: http(s) thì tải về, content/file/android.resource thì đọc trực tiếp. Có bộ nhớ đệm, gọi trên luồng nền */
-    fun poster(c: Context, u: String, mw: Int, mh: Int): Bitmap? {
-        cache.get(u)?.let { return it }
-        val bmp = try {
-            val bytes = if (u.startsWith("http", true)) {
-                val con = URL(u).openConnection() as java.net.HttpURLConnection
-                con.connectTimeout = 8000; con.readTimeout = 8000; con.setRequestProperty("User-Agent", "TVLauncher/1.3")
-                try { con.inputStream.use { it.readBytes() } } finally { con.disconnect() }
-            } else c.contentResolver.openInputStream(Uri.parse(u))?.use { it.readBytes() }
-            bytes?.let { b ->
-                val o = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                BitmapFactory.decodeByteArray(b, 0, b.size, o)
-                var sm = 1
-                while (o.outWidth / (sm * 2) >= mw && o.outHeight / (sm * 2) >= mh) sm *= 2
-                BitmapFactory.decodeByteArray(b, 0, b.size, BitmapFactory.Options().apply { inSampleSize = sm })
-            }
-        } catch (e: Throwable) { null }
-        if (bmp != null) cache.put(u, bmp)
-        return bmp
-    }
-
-    /** Mở nội dung theo đường dẫn ứng dụng đã khai báo. Ứng dụng đang bị khoá thì hỏi PIN như khi mở ứng dụng */
-    fun open(c: Context, p: Prog) {
-        val i = try { Intent.parseUri(p.intent, Intent.URI_INTENT_SCHEME) } catch (e: Exception) { null }
-        // Không cho một ứng dụng khác nhờ launcher mở màn hình nội bộ của chính launcher
-        if (i == null || i.component?.packageName == c.packageName) { Toast.makeText(c, "Không mở được nội dung này", Toast.LENGTH_SHORT).show(); return }
-        i.selector = null
-        val go = { if (!safeStart(c, i)) Toast.makeText(c, "Không mở được nội dung này", Toast.LENGTH_SHORT).show() }
-        if (Apps.isLocked(c, p.pkg)) guard(c) { go() } else go()
-    }
-}
-
 fun Context.dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
 /** Ô ứng dụng: ấn = mở, giữ lâu = menu */
-fun appView(c: Context, a: AppItem, inGrid: Boolean = false, onChange: () -> Unit): View = LinearLayout(c).apply {
-    val sc = Apps.scale(c, a.pkg)
+fun appView(c: Context, a: AppItem, inGrid: Boolean = false, mult: Float = 1f, onChange: () -> Unit): View = LinearLayout(c).apply {
+    val sc = Apps.scale(c, a.pkg) * mult
     orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER
     setPadding(c.dp(12), c.dp(12), c.dp(12), c.dp(12))
     // Trong lưới "Tất cả ứng dụng" ô không tự nhận phím/chạm, GridView lo việc bấm và giữ
@@ -459,6 +370,7 @@ fun showMenu(c: Context, a: AppItem, onChange: () -> Unit) {
     if (fav) row("Xoá khỏi mục Yêu thích") { toggleFav() }
     row("Mở ứng dụng") { openApp(c, a) }
     if (!fav) row("Thêm vào mục Yêu thích") { toggleFav() }
+    row("Thêm vào mục tuỳ chỉnh…") { secPickAdd(c, a, onChange) }
     row("Tuỳ chỉnh kích thước") { sizeDialog(c, a.pkg, a.label, onChange) }
     row("Ẩn ứng dụng") { Apps.setHidden(c, a.pkg, true); onChange() }
     row(if (Apps.isLocked(c, a.pkg)) "Mở khoá ứng dụng" else "Khoá ứng dụng") {
@@ -517,16 +429,16 @@ class MainActivity : VActivity() {
     private lateinit var bottomCol: LinearLayout
     private lateinit var leftRow: LinearLayout
     private lateinit var iconsRow: LinearLayout
-    private lateinit var tvBox: LinearLayout
-    private val tvCards = ArrayList<View>()
-    private var tvSig = ""
-    private var tvGen = 0
+    private lateinit var secBox: LinearLayout
+    private lateinit var bottomScroll: ScrollView
+    private val secCards = ArrayList<View>()
 
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
         scaleKey = (uiScale(this) * 1000).toInt()
-        // Dọn dữ liệu cũ của hàng Truyền hình (đã bỏ hẳn tính năng này)
-        Apps.del(this, "tv_ch", "tv_show")
+        // Dọn dữ liệu cũ của hàng Kênh / Truyền hình (đã bỏ hẳn tính năng này)
+        Apps.del(this, "tv_ch", "tv_show", "tvc_show", "vch", "size_@tv", "fs_@tv")
+        Apps.setHidden(this, "@tv", false)
         val root = FrameLayout(this)
         bg = FrameLayout(this); tint = View(this)
         root.addView(bg, -1, -1); root.addView(tint, -1, -1)
@@ -594,10 +506,12 @@ class MainActivity : VActivity() {
             setOnLongClickListener { blockMenu(this@MainActivity, "@inputs", "Hàng đầu vào") { applyAll() }; true }
         }
         inputBox = ibox
-        // Kênh từ ứng dụng: nằm trên hàng Yêu thích. Mỗi kênh đã chọn là một hàng (tên kênh + các ô nội dung); chưa chọn kênh nào thì ẩn cả khối
-        tvBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; visibility = View.GONE }
+        // Các mục tuỳ chỉnh: nằm trên hàng Yêu thích, mỗi mục là một hàng (tên mục + các ô ứng dụng); chưa có mục nào thì ẩn cả khối
+        secBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; visibility = View.GONE }
         bottomCol = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        root.addView(bottomCol, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM).apply { setMargins(dp(40), 0, dp(40), dp(40)) })
+        // Cuộn dọc được: nhiều mục thì màn hình cuộn theo ô đang chọn, không tràn ra ngoài. Chừa phía trên cho ô giờ + thời tiết
+        bottomScroll = ScrollView(this).apply { isFocusable = false; isVerticalScrollBarEnabled = false; overScrollMode = View.OVER_SCROLL_NEVER; addView(bottomCol) }
+        root.addView(bottomScroll, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM).apply { setMargins(dp(40), dp(180), dp(40), dp(40)) })
         setContentView(root)
         left.getChildAt(1).requestFocus()
     }
@@ -696,10 +610,6 @@ class MainActivity : VActivity() {
         col.addView(Button(c).apply {
             text = "Tìm xã / phường / thị trấn / huyện…"
             setOnClickListener { searchPlace { h -> pick = Triple(h.first, h.second, h.third); showPick() } }
-        })
-        col.addView(Button(c).apply {
-            text = "Nhập thủ công (tên + toạ độ)…"
-            setOnClickListener { manualPlace { t -> pick = t; showPick() } }
         })
         col.addView(picked)
         col.addView(TextView(c).apply { text = "Kích thước: gạt trái = nhỏ, gạt phải = lớn (tối đa vừa màn hình)"; setPadding(0, dp(20), 0, 0) })
@@ -811,31 +721,6 @@ class MainActivity : VActivity() {
         return out.sortedBy { if (matchAll(it.label)) 0 else 1 }
     }
 
-    // Nhập tay: tên hiển thị + vĩ độ + kinh độ (lấy từ Google Maps: bấm giữ vào điểm rồi chép cặp số). Có thể dán cả cặp "21.3227, 105.4019" vào ô Vĩ độ
-    private fun manualPlace(onPick: (Triple<String, Double, Double>) -> Unit) {
-        val c = this
-        val name = EditText(c).apply { hint = "Tên hiển thị (VD: Nhà tôi)"; setSingleLine(true) }
-        val lat = EditText(c).apply { hint = "Vĩ độ (VD: 21.3227)"; setSingleLine(true); inputType = android.text.InputType.TYPE_CLASS_TEXT }
-        val lon = EditText(c).apply { hint = "Kinh độ (VD: 105.4019)"; setSingleLine(true); inputType = android.text.InputType.TYPE_CLASS_TEXT }
-        val note = TextView(c).apply { textSize = 12f; text = "Mẹo: trên Google Maps bấm giữ vào điểm cần xem, chép cặp số hiện ra rồi dán cả vào ô Vĩ độ."; setPadding(0, dp(8), 0, 0) }
-        val col = LinearLayout(c).apply {
-            orientation = LinearLayout.VERTICAL; setPadding(dp(24), dp(12), dp(24), 0)
-            addView(name); addView(lat); addView(lon); addView(note)
-        }
-        val dlg = AlertDialog.Builder(c).setTitle("Nhập thủ công").setView(ScrollView(c).apply { addView(col) })
-            .setPositiveButton("Dùng nơi này", null).setNegativeButton("Huỷ", null).create()
-        dlg.show()
-        dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-            val nums = Regex("-?\\d+(?:[.,]\\d+)?").findAll(lat.text.toString() + " " + lon.text.toString())
-                .map { it.value.replace(',', '.').toDouble() }.toList()
-            if (nums.size < 2) { Toast.makeText(c, "Cần nhập đủ vĩ độ và kinh độ", Toast.LENGTH_SHORT).show(); return@setOnClickListener }
-            val la = nums[0]; val lo = nums[1]
-            if (la < -90 || la > 90 || lo < -180 || lo > 180) { Toast.makeText(c, "Toạ độ không hợp lệ (vĩ độ -90..90, kinh độ -180..180)", Toast.LENGTH_LONG).show(); return@setOnClickListener }
-            val nm = name.text.toString().trim().ifEmpty { "Nơi của tôi" }
-            onPick(Triple(nm, la, lo)); dlg.dismiss()
-        }
-    }
-
     private fun searchPlace(onPick: (Triple<String, Double, Double>) -> Unit) {
         val c = this
         val hits = ArrayList<Hit>(); val labels = ArrayList<String>()
@@ -895,12 +780,17 @@ class MainActivity : VActivity() {
     }
 
     // Tiêu đề của một hàng: bấm OK (hoặc giữ) để đổi kích thước / chuyển lên-xuống / ẩn
-    private fun rowTitle(label: String, key: String, name: String, row: () -> android.view.ViewGroup) = TextView(this).apply {
+    private fun rowTitle(label: String, key: String, name: String, menu: (() -> Unit)? = null, row: () -> android.view.ViewGroup) = TextView(this).apply {
         text = label; setTextColor(Color.WHITE); textSize = 14f
         setPadding(dp(12), dp(4), dp(12), dp(4)); isFocusable = false; isClickable = true  // tiêu đề chỉ để đọc, điều khiển không dừng vào đây
         background = null
-        setOnClickListener { blockMenu(this@MainActivity, key, name) { applyAll() } }
-        setOnLongClickListener { blockMenu(this@MainActivity, key, name) { applyAll() }; true }
+        // Mục tuỳ chỉnh (menu != null) mở menu riêng của mục; các hàng Yêu thích / Đầu vào vẫn dùng blockMenu như cũ
+        val open: () -> Unit = {
+            if (menu != null) { if (Apps.bool(this@MainActivity, "pick", true)) menu() }
+            else blockMenu(this@MainActivity, key, name) { applyAll() }
+        }
+        setOnClickListener { open() }
+        setOnLongClickListener { open(); true }
         // Bấm XUỐNG từ tiêu đề: vào thẳng ô đầu tiên của hàng, không để Android tự đoán rồi nhảy sang hàng khác
         setOnKeyListener { _, code, e ->
             if (code == KeyEvent.KEYCODE_DPAD_DOWN && e.action == KeyEvent.ACTION_DOWN) {
@@ -910,20 +800,21 @@ class MainActivity : VActivity() {
         }
     }
 
-    // Sắp xếp hai hàng dưới cùng: mặc định Yêu thích ở trên, Đầu vào ở dưới
+    // Sắp xếp các khối dưới cùng: các mục tuỳ chỉnh ở trên, rồi mặc định Yêu thích ở trên, Đầu vào ở dưới
     private fun applyOrder() {
         val above = Apps.inputsAbove(this)
         val first = if (above) inputBox else favBox
         val second = if (above) favBox else inputBox
-        val keyOf = { v: View -> if (v === tvBox) "@tv" else if (v === favBox) "@favs" else "@inputs" }
-        val all = listOf(tvBox, first, second)
-        if (bottomCol.childCount != 3 || bottomCol.getChildAt(0) !== tvBox || bottomCol.getChildAt(1) !== first) {
+        val keyOf = { v: View -> if (v === favBox) "@favs" else "@inputs" }
+        val all = listOf(secBox, first, second)
+        if (bottomCol.childCount != 3 || bottomCol.getChildAt(0) !== secBox || bottomCol.getChildAt(1) !== first) {
             bottomCol.removeAllViews(); all.forEach { bottomCol.addView(it) }
         }
-        // Khoảng cách chỉ chừa khi phía dưới còn khối đang hiện
+        // Khoảng cách chỉ chừa khi phía dưới còn khối đang hiện (mỗi mục tuỳ chỉnh đã tự chừa khoảng cách riêng)
+        val shown = { v: View -> if (v === secBox) secBox.childCount > 0 else !Apps.isHidden(this, keyOf(v)) }
         all.forEachIndexed { i, v ->
-            val laterVisible = all.drop(i + 1).any { !Apps.isHidden(this, keyOf(it)) }
-            v.setPadding(0, 0, 0, if (laterVisible) dp(14) else 0)
+            val laterVisible = all.drop(i + 1).any { shown(it) }
+            v.setPadding(0, 0, 0, if (laterVisible && v !== secBox) dp(14) else 0)
         }
     }
 
@@ -933,14 +824,14 @@ class MainActivity : VActivity() {
     }
 
     // Thứ tự di chuyển cố định (không phụ thuộc cách Android tự đoán):
-    // Mic -> Tất cả ứng dụng -> Wi-Fi -> Cài đặt -> Giờ/ngày/thời tiết -> từng ô kênh -> từng ứng dụng yêu thích
+    // Mic -> Tất cả ứng dụng -> Wi-Fi -> Cài đặt -> Giờ/ngày/thời tiết -> từng ô trong các mục tuỳ chỉnh -> từng ứng dụng yêu thích
     // -> từng cổng vào. Các tiêu đề (Yêu thích, Đầu vào) bị bỏ qua, chỉ dừng ở ô có thể bấm. Nếu đã đổi vị trí hàng Đầu vào lên trên thì hai hàng cuối đổi chỗ cho khớp màn hình
     private fun focusOrder(): List<View> {
         val l = ArrayList<View>()
         for (i in 0 until leftRow.childCount) l.add(leftRow.getChildAt(i))
         for (i in 0 until iconsRow.childCount) l.add(iconsRow.getChildAt(i))
         l.add(cwBox)
-        l.addAll(tvCards)
+        l.addAll(secCards)
         val blocks = if (Apps.inputsAbove(this)) listOf(inputBox to inputRow, favBox to favRow) else listOf(favBox to favRow, inputBox to inputRow)
         for ((_, row) in blocks) {
             for (i in 0 until row.childCount) l.add(row.getChildAt(i))
@@ -1047,16 +938,14 @@ class MainActivity : VActivity() {
     private fun applyAll() {
         applyBackground()
         tint.setBackgroundColor(0x00000000)
-        (bottomCol.layoutParams as FrameLayout.LayoutParams).bottomMargin = dp(intArrayOf(20, 40, 80)[Apps.int(this, "cat_h", 1)])
-        bottomCol.requestLayout()
+        (bottomScroll.layoutParams as FrameLayout.LayoutParams).bottomMargin = dp(intArrayOf(20, 40, 80)[Apps.int(this, "cat_h", 1)])
+        bottomScroll.requestLayout()
         lunar.visibility = if (Apps.bool(this, "lunar", true)) View.VISIBLE else View.GONE
         applyTexts()
+        refreshSecs()
         applyOrder()
         refreshFavs()
         applyBox()
-        refreshTv()
-        applyBlock(this, tvBox, "@tv", 0f, 1f)
-        if (tvCards.isEmpty()) tvBox.visibility = View.GONE
         applyBlock(this, favBox, "@favs", 0f, 1f)
         applyBlock(this, inputBox, "@inputs", 0f, 1f)
     }
@@ -1134,58 +1023,51 @@ class MainActivity : VActivity() {
         return pkg.contains("mitv") || pkg.contains("xiaomi")
     }
 
-    // ===== Kênh từ ứng dụng =====
-    // Đọc nội dung các kênh đã chọn ở Cài đặt > Kênh trên màn hình chính (truy vấn chạy nền, ảnh bìa tải riêng từng ô)
-    private fun refreshTv() {
-        val ids = TvChannels.selected(this)
-        if (ids.isEmpty() || !TvChannels.usable(this)) {
-            tvGen++; tvSig = ""; tvCards.clear(); tvBox.removeAllViews(); tvBox.visibility = View.GONE; return
-        }
-        val gen = ++tvGen
-        TvChannels.pool.execute {
-            val data = TvChannels.load(this, ids)
-            runOnUiThread { if (gen == tvGen && !isFinishing) showTv(data) }
-        }
-    }
-
-    private fun showTv(data: List<Pair<TvChannels.Ch, List<TvChannels.Prog>>>) {
-        // Dữ liệu không đổi thì giữ nguyên các ô (không dựng lại, không mất tiêu điểm đang chọn)
-        val sig = data.joinToString("|") { (ch, ps) -> "${ch.id}:" + ps.joinToString(",") { it.title + it.poster } }
-        if (sig != tvSig) {
-            tvSig = sig; tvCards.clear(); tvBox.removeAllViews()
-            for ((ch, ps) in data) {
-                if (ps.isEmpty()) continue
-                tvBox.addView(TextView(this).apply { text = ch.label; setTextColor(Color.WHITE); textSize = 14f; setPadding(dp(12), dp(4), dp(12), dp(2)) }, LinearLayout.LayoutParams(-2, -2))
-                val row = LinearLayout(this)
-                ps.forEach { p -> val v = tvCard(p); tvCards.add(v); row.addView(v) }
-                tvBox.addView(HorizontalScrollView(this).apply { isFocusable = false; isHorizontalScrollBarEnabled = false; addView(row) })
+    // ===== Mục tuỳ chỉnh: mỗi mục (do người dùng tạo, đổi tên được) là một hàng gồm tên mục + các ô ứng dụng, nằm trên hàng Yêu thích =====
+    // Quản lý mục (tạo, đổi tên, thêm/bỏ/sắp xếp ứng dụng, đổi cỡ, ẩn) nằm trong Sections.kt
+    private fun refreshSecs() {
+        // Nhớ ô đang chọn (mục + vị trí) để dựng lại xong thì chọn lại đúng chỗ đó
+        var ft: String? = null
+        var f: View? = currentFocus
+        while (f != null && ft == null) { ft = (f.tag as? String)?.takeIf { it.startsWith("sec:") }; f = f.parent as? View }
+        secCards.clear(); secBox.removeAllViews()
+        val all = Apps.load(this).associateBy { it.pkg }
+        val showPlus = Apps.bool(this, "sec_plus", true)
+        for (s in Secs.load(this)) {
+            if (Apps.isHidden(this, Secs.key(s.id))) continue
+            val mult = Secs.mult(this, s.id)
+            val row = LinearLayout(this)
+            val apps = s.pkgs.mapNotNull { all[it] }
+            apps.forEachIndexed { i, a ->
+                val v = appView(this, a, false, mult) { applyAll() }
+                v.tag = "sec:${s.id}:$i"
+                // Giữ OK trên ứng dụng trong mục: menu riêng của mục (chuyển trái/phải, bỏ khỏi mục...), trong đó vẫn có menu ứng dụng cũ
+                v.setOnLongClickListener { secAppMenu(this, s.id, a) { applyAll() }; true }
+                secCards.add(v); row.addView(v)
             }
-        }
-        applyBlock(this, tvBox, "@tv", 0f, 1f)
-        if (tvCards.isEmpty()) tvBox.visibility = View.GONE
-    }
-
-    private fun tvCard(p: TvChannels.Prog): View {
-        val h = dp(96); val w = maxOf((h * p.ratio).toInt(), dp(120))
-        val img = ImageView(this).apply {
-            scaleType = ImageView.ScaleType.CENTER_CROP; setBackgroundColor(0x33FFFFFF); clipToOutline = true
-            outlineProvider = object : ViewOutlineProvider() { override fun getOutline(v: View, o: Outline) { o.setRoundRect(0, 0, v.width, v.height, dp(8).toFloat()) } }
-        }
-        p.poster?.let { u -> TvChannels.pool.execute { val b = TvChannels.poster(this, u, w, h); if (b != null) runOnUiThread { img.setImageBitmap(b) } } }
-        return LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL; setPadding(dp(6), dp(6), dp(6), dp(6)); isFocusable = true; isClickable = true
-            addView(img, LinearLayout.LayoutParams(w, h))
-            addView(TextView(this@MainActivity).apply {
-                text = p.title; setTextColor(Color.WHITE); textSize = 12f * Apps.fs(this@MainActivity); maxLines = 1
-                ellipsize = android.text.TextUtils.TruncateAt.END; setPadding(0, dp(4), 0, 0)
-            }, LinearLayout.LayoutParams(w, -2))
-            setOnFocusChangeListener { v, f ->
-                v.scaleX = if (f && !Apps.rm(this@MainActivity)) 1.08f else 1f; v.scaleY = v.scaleX
-                v.background = if (f) GradientDrawable().apply { cornerRadius = dp(12).toFloat(); setColor(0x33FFFFFF) } else null
-                if (f && Apps.bool(this@MainActivity, "tts", false)) Speaker.say(this@MainActivity, p.title)
+            // Mục trống thì luôn hiện ô +, để vẫn thêm được ứng dụng bằng điều khiển
+            if (showPlus || apps.isEmpty()) {
+                val p = plusTile(this, mult) { secAddApps(this, s.id) { applyAll() } }
+                p.tag = "sec:${s.id}:+"
+                secCards.add(p); row.addView(p)
             }
-            setOnClickListener { TvChannels.open(this@MainActivity, p) }
-            setOnLongClickListener { blockMenu(this@MainActivity, "@tv", "Kênh trên màn hình chính") { applyAll() }; true }
+            val menu = { secMenu(this, s.id) { applyAll() } }
+            val block = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL; setPadding(0, 0, 0, dp(14))
+                addView(rowTitle(s.name, Secs.key(s.id), s.name, menu) { row }, LinearLayout.LayoutParams(-2, -2))
+                addView(HorizontalScrollView(this@MainActivity).apply { isFocusable = false; isHorizontalScrollBarEnabled = false; addView(row) })
+            }
+            secBox.addView(block)
+        }
+        secBox.visibility = if (secBox.childCount == 0) View.GONE else View.VISIBLE
+        // Chọn lại ô vừa dùng; nếu ô đó đã bị bỏ thì chọn ô gần nhất trong cùng mục
+        val t = ft
+        if (t != null) {
+            val prefix = t.substringBeforeLast(":") + ":"
+            val same = secCards.filter { (it.tag as? String)?.startsWith(prefix) == true }
+            val want = t.substringAfterLast(":").toIntOrNull()
+            val target = secCards.firstOrNull { it.tag == t } ?: if (want != null) same.getOrNull(minOf(want, same.size - 1)) else same.lastOrNull()
+            target?.let { v -> v.post { v.requestFocus() } }
         }
     }
 

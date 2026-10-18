@@ -11,7 +11,9 @@ import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
+import android.text.InputFilter
 import android.text.InputType
+import android.view.View
 import android.view.Gravity
 import android.widget.*
 import android.os.Handler
@@ -30,37 +32,87 @@ const val RECOVERY_URL = "https://script.google.com/macros/s/AKfycbxsslXTbvK6Tal
 
 private fun toast(c: Context, m: String) = Toast.makeText(c, m, Toast.LENGTH_LONG).show()
 private fun sha(s: String) = MessageDigest.getInstance("SHA-256").digest(s.toByteArray()).joinToString("") { "%02x".format(it) }
-private fun numField(c: Context, h: String) = EditText(c).apply { inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD; hint = h }
+/** Độ dài mã PIN đang dùng: 4 hoặc 8 số (bản cũ chưa lưu thì mặc định 4) */
+private fun pinLen(c: Context) = if (Apps.str(c, "pin_len") == "8") 8 else 4
+/** Ô nhập số. max > 0: chỉ cho gõ tối đa max số, gõ thêm sẽ không nhận */
+private fun numField(c: Context, h: String, max: Int = 0) = EditText(c).apply {
+    inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD; hint = h
+    if (max > 0) filters = arrayOf(InputFilter.LengthFilter(max))
+}
 private fun mailField(c: Context, v: String?) = EditText(c).apply { inputType = InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS or InputType.TYPE_CLASS_TEXT; hint = "Gmail khôi phục"; setText(v ?: "") }
 private fun validMail(s: String) = android.util.Patterns.EMAIL_ADDRESS.matcher(s).matches()
 private fun column(c: Context, vararg v: android.view.View) = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL; setPadding(c.dp(24), c.dp(8), c.dp(24), 0); v.forEach { addView(it) } }
 
-/** Khoá ứng dụng: có PIN thì mở cài đặt / xoá / mở ứng dụng đã khoá phải nhập PIN */
+/** Khoá ứng dụng: có PIN thì mở cài đặt / xoá / mở ứng dụng đã khoá phải nhập PIN.
+ *  Nút "Quên mã?" chỉ hiện khi đã nhập Gmail khôi phục; không có Gmail thì không lấy lại được mã */
 fun guard(c: Context, ok: () -> Unit) {
     val pin = Apps.str(c, "pin")
     if (pin == null) { ok(); return }
-    val et = numField(c, "Nhập mã PIN")
-    AlertDialog.Builder(c).setTitle("Khoá ứng dụng").setView(column(c, et))
+    val n = pinLen(c)
+    val et = numField(c, "Nhập mã PIN ($n số)", n)
+    val b = AlertDialog.Builder(c).setTitle("Khoá ứng dụng").setView(column(c, et))
         .setPositiveButton("OK") { _, _ -> if (sha(et.text.toString()) == pin) ok() else toast(c, "Sai mã PIN") }
-        .setNeutralButton("Quên mã?") { _, _ -> recoverPin(c) { ok() } }
-        .setNegativeButton("Huỷ", null).setCancelable(false).show()
+        .setNegativeButton("Huỷ", null).setCancelable(false)
+    if (Apps.str(c, "pin_mail") != null && RECOVERY_URL.isNotEmpty()) b.setNeutralButton("Quên mã?") { _, _ -> recoverPin(c) { ok() } }
+    b.show()
 }
 
-/** Bật khoá: đặt PIN 4 số + Gmail khôi phục. askMail=false khi chỉ đặt lại PIN */
+/** Bật khoá / đặt PIN mới: chọn PIN 4 hoặc 8 số (không gõ quá số đã chọn).
+ *  askMail=true (lúc bật khoá lần đầu): có ô tích "Dùng Gmail khôi phục" — không tích thì vẫn khoá được nhưng quên mã sẽ không lấy lại được.
+ *  askMail=false (đổi PIN / đặt lại sau khi quên): giữ nguyên Gmail đã có */
 fun setupLock(c: Context, askMail: Boolean, done: () -> Unit) {
-    val pin = numField(c, "Đặt PIN 4 số"); val mail = mailField(c, null)
-    AlertDialog.Builder(c).setTitle("Bật khoá ứng dụng").setView(if (askMail) column(c, pin, mail) else column(c, pin))
-        .setPositiveButton("Lưu") { _, _ ->
-            if (pin.text.length != 4) toast(c, "PIN phải đủ 4 số")
-            else if (askMail && !validMail(mail.text.toString().trim())) toast(c, "Gmail không hợp lệ")
-            else { Apps.putStr(c, "pin", sha(pin.text.toString())); if (askMail) Apps.putStr(c, "pin_mail", mail.text.toString().trim()); done() }
-        }.setNegativeButton("Huỷ", null).setCancelable(false).show()
+    var n = pinLen(c)
+    val pin = numField(c, "Đặt PIN $n số", n)
+    val r4 = RadioButton(c).apply { id = View.generateViewId(); text = "PIN 4 số" }
+    val r8 = RadioButton(c).apply { id = View.generateViewId(); text = "PIN 8 số" }
+    val grp = RadioGroup(c).apply { orientation = LinearLayout.HORIZONTAL; addView(r4); addView(r8); check(if (n == 8) r8.id else r4.id) }
+    grp.setOnCheckedChangeListener { _, id ->
+        n = if (id == r8.id) 8 else 4
+        pin.hint = "Đặt PIN $n số"
+        pin.filters = arrayOf(InputFilter.LengthFilter(n))
+        if (pin.text.length > n) pin.setText(pin.text.toString().substring(0, n))   // đổi 8 → 4 thì cắt bớt số thừa
+        pin.setSelection(pin.text.length)
+    }
+    val views = ArrayList<android.view.View>()
+    views.add(grp); views.add(pin)
+    var useMail: CheckBox? = null
+    var mail: EditText? = null
+    if (askMail) {
+        val note = TextView(c).apply { text = "Không dùng Gmail: vẫn khoá được, nhưng nếu quên mã PIN sẽ không lấy lại được."; textSize = 13f; setPadding(0, c.dp(4), 0, 0) }
+        val m = mailField(c, null).apply { visibility = View.GONE }
+        val cb = CheckBox(c).apply { text = "Dùng Gmail để lấy lại mã khi quên (không bắt buộc)"; isChecked = false; setPadding(0, c.dp(8), 0, 0) }
+        cb.setOnCheckedChangeListener { _, on ->
+            m.visibility = if (on) View.VISIBLE else View.GONE
+            note.visibility = if (on) View.GONE else View.VISIBLE
+        }
+        useMail = cb; mail = m
+        views.add(cb); views.add(m); views.add(note)
+    }
+    val dlg = AlertDialog.Builder(c).setTitle(if (askMail) "Bật khoá ứng dụng" else "Đặt mã PIN mới")
+        .setView(ScrollView(c).apply { addView(column(c, *views.toTypedArray())) })
+        .setPositiveButton("Lưu", null).setNegativeButton("Huỷ", null).setCancelable(false).create()
+    // Nhập sai thì báo lỗi nhưng KHÔNG đóng hộp thoại, đỡ phải chọn lại từ đầu
+    dlg.setOnShowListener {
+        dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            val p = pin.text.toString()
+            val wantMail = askMail && useMail?.isChecked == true
+            val mailText = mail?.text?.toString()?.trim().orEmpty()
+            if (p.length != n) toast(c, "PIN phải đủ $n số")
+            else if (wantMail && !validMail(mailText)) toast(c, "Gmail không hợp lệ")
+            else {
+                Apps.putStr(c, "pin", sha(p)); Apps.putStr(c, "pin_len", n.toString())
+                if (askMail) { if (wantMail) Apps.putStr(c, "pin_mail", mailText) else Apps.del(c, "pin_mail") }
+                dlg.dismiss(); done()
+            }
+        }
+    }
+    dlg.show()
 }
 
-/** Quên PIN: gửi mã 6 số tới Gmail đã đăng ký, nhập đúng mã thì đặt lại PIN */
+/** Quên PIN: gửi mã 6 số tới Gmail đã đăng ký, nhập đúng mã thì đặt lại PIN (chọn lại 4 hoặc 8 số) */
 fun recoverPin(c: Context, done: () -> Unit) {
     val mail = Apps.str(c, "pin_mail")
-    if (mail == null || RECOVERY_URL.isEmpty()) { toast(c, "Chưa có Gmail khôi phục hoặc chưa cấu hình máy chủ gửi mã"); return }
+    if (mail == null || RECOVERY_URL.isEmpty()) { toast(c, "Chưa có Gmail khôi phục nên không thể lấy lại mã PIN"); return }
     val code = (100000..999999).random().toString()
     toast(c, "Đang gửi mã tới $mail…")
     thread {
@@ -68,7 +120,7 @@ fun recoverPin(c: Context, done: () -> Unit) {
         Handler(Looper.getMainLooper()).post {
             if (!ok) { toast(c, "Không gửi được mã. Kiểm tra mạng"); return@post }
             Apps.putStr(c, "rc_hash", sha(code)); Apps.putStr(c, "rc_exp", (System.currentTimeMillis() + 600000).toString())
-            val et = numField(c, "Mã 6 số")
+            val et = numField(c, "Mã 6 số", 6)
             AlertDialog.Builder(c).setTitle("Nhập mã đã gửi tới $mail").setView(column(c, et))
                 .setPositiveButton("Xác nhận") { _, _ ->
                     val valid = sha(et.text.toString()) == Apps.str(c, "rc_hash") && System.currentTimeMillis() < (Apps.str(c, "rc_exp")?.toLong() ?: 0L)
@@ -160,13 +212,14 @@ class SettingsActivity : VActivity() {
         val keepIdx = focusedRow()
         list.removeAllViews()
         list.addView(TextView(this).apply { text = "TV Launcher"; textSize = 24f; setTextColor(0xFF4D6BFF.toInt()); setPadding(dp(24), 0, 0, dp(12)) })
-        item("Giới thiệu", "v1.3", false, null, null) { showAbout() }
+        item("Giới thiệu", "v$APP_VERSION", false, null, null) { showAbout() }
         item("Hướng dẫn cho TV Xiaomi nội địa", null, false, null, null) { xiaomiHelp() }
         val dm = android.util.DisplayMetrics(); windowManager.defaultDisplay.getRealMetrics(dm)
         item("Độ phân giải màn hình", "${dm.widthPixels}x${dm.heightPixels}", false, null, null) { toast(this, "Đây là độ phân giải TV đang xuất ra. Nếu chữ quá to hoặc quá nhỏ, hãy chọn Kích cỡ TV bên dưới.") }
         choice("Kích cỡ TV", "tvsize", TV_SIZES, 0, true)
         choice("Tinh chỉnh độ lớn giao diện", "tvfine", FINE_LABELS, 2, true)
-        item("Kênh trên màn hình chính", TvChannels.selected(this).size.let { if (it == 0) "Chưa chọn" else "Đang hiện $it" }, false, null, { Apps.del(this, "tvc_show") }) { tvChannelsDialog() }
+        item("Mục trên màn hình chính", Secs.load(this).size.let { if (it == 0) "Chưa có" else "$it mục" }, false, null, null) { secListDialog(this) { build() } }
+        toggle("Hiện nút + ở cuối mỗi mục", "sec_plus", true)
         item("Chuyển đầu vào (HDMI/AV)", null, false, null, null) { pickInput(this) }
         item("Cài đặt hệ thống", null, false, null, null) { openSystemSettings(this) }
         val vp = Apps.str(this, "voice_pkg")
@@ -186,8 +239,6 @@ class SettingsActivity : VActivity() {
         toggle("Hiển thị lịch âm", "lunar", true)
         item("Hiển thị tiện ích thời tiết", null, false, !Apps.isHidden(this, "@weather"), { Apps.setHidden(this, "@weather", false) }) {
             Apps.setHidden(this, "@weather", !Apps.isHidden(this, "@weather")); build() }
-        item("Hiển thị kênh trên màn hình chính", null, false, !Apps.isHidden(this, "@tv"), { Apps.setHidden(this, "@tv", false) }) {
-            Apps.setHidden(this, "@tv", !Apps.isHidden(this, "@tv")); build() }
         item("Hiển thị hàng Yêu thích", null, false, !Apps.isHidden(this, "@favs"), { Apps.setHidden(this, "@favs", false) }) {
             Apps.setHidden(this, "@favs", !Apps.isHidden(this, "@favs")); build() }
         item("Hiển thị hàng Đầu vào (HDMI, VGA...)", null, false, !Apps.isHidden(this, "@inputs"), { Apps.setHidden(this, "@inputs", false) }) {
@@ -197,11 +248,13 @@ class SettingsActivity : VActivity() {
             Apps.setInputsAbove(this, !Apps.inputsAbove(this)); build() }
         toggle("Cho phép chọn tiện ích", "pick", true)
         item("Thiết lập lại tiện ích", null, false, null, null) {
-            listOf("@weather", "@clock", "@favs", "@inputs", "@tv").forEach { Apps.setHidden(this, it, false); Apps.del(this, "size_$it", "fs_$it") }
-            Apps.del(this, "cw_lock", "wx_place", "wx_lat", "wx_lon", "tv_ch", "tv_show")
+            listOf("@weather", "@clock", "@favs", "@inputs").forEach { Apps.setHidden(this, it, false); Apps.del(this, "size_$it", "fs_$it") }
+            Secs.load(this).forEach { Apps.setHidden(this, Secs.key(it.id), false); Apps.del(this, "ssz_${it.id}") }
+            Apps.del(this, "cw_lock", "wx_place", "wx_lat", "wx_lon")
             Apps.setInputsAbove(this, false)
             Toast.makeText(this, "Đã thiết lập lại", Toast.LENGTH_SHORT).show(); build() }
-        item("Hiện lại ứng dụng đã ẩn", null, false, null, null) { hiddenAppsDialog() }
+        item("Ẩn / hiện ứng dụng", Apps.loadAll(this).count { Apps.isHidden(this, it.pkg) }.let { if (it == 0) "Chưa ẩn" else "Đang ẩn $it" }, false, null, null) { hiddenAppsDialog() }
+        item("Gỡ cài đặt ứng dụng", null, false, null, null) { uninstallDialog() }
         choice("Kích thước ứng dụng", "appsize", arrayOf("Nhỏ", "Vừa", "Lớn"), 1)
         item("Dịch vụ trợ năng", enabledServices().size.let { if (it == 0) "Tắt" else "Bật ($it)" }, false, null, null) { accessibilityDialog() }
         choice("Cỡ chữ", "fontsz", arrayOf("Vừa", "Lớn", "Rất lớn"), 0)
@@ -209,7 +262,7 @@ class SettingsActivity : VActivity() {
         toggle("Đọc tên ứng dụng (TTS)", "tts", false)
         item("Cài app không rõ nguồn gốc", null, false, null, null) { guard(this) { unknownDialog() } }
         item("Quyền ứng dụng", null, false, null, null) { permissionDialog() }
-        item("Khoá ứng dụng", if (Apps.str(this, "pin") == null) "Tắt" else "Đang bật", true, null, null) { lockDialog() }
+        item("Khoá ứng dụng", if (Apps.str(this, "pin") == null) "Tắt" else "Đang bật (PIN ${pinLen(this)} số)", true, null, null) { lockDialog() }
         item("Khôi phục cài đặt TV Launcher", null, true, null, null) { guard(this) { confirmReset() } }
         list.addView(TextView(this).apply { text = "TV Launcher By Lộc Hưng"; textSize = 14f; setTextColor(Color.WHITE); gravity = Gravity.CENTER; setPadding(0, dp(24), 0, 0) })
         // Trả lại đúng vị trí cuộn và dòng đang chọn như trước khi dựng lại
@@ -242,59 +295,29 @@ class SettingsActivity : VActivity() {
         item(title, null, false, Apps.bool(this, key, def), { Apps.del(this, key) }) { Apps.putBool(this, key, !Apps.bool(this, key, def)); build() }
     }
 
-    // Kênh trên màn hình chính: chọn kênh thật do các ứng dụng xem TV đăng lên hệ thống để hiện ở màn hình chính
-    private fun tvChannelsDialog() {
-        if (!TvChannels.supported()) {
-            AlertDialog.Builder(this).setTitle("Kênh trên màn hình chính")
-                .setMessage("TV này chạy Android ${Build.VERSION.RELEASE}. Tính năng này cần Android 8.0 trở lên.")
-                .setPositiveButton("Đóng", null).show()
-            return
-        }
-        if (!TvChannels.granted(this)) { requestPermissions(arrayOf(TvChannels.PERM), 78); return }
-        toast(this, "Đang tìm kênh...")
-        thread {
-            val chs = TvChannels.channels(this)
-            runOnUiThread { if (!isFinishing) tvChannelsPick(chs) }
-        }
-    }
-
-    private fun tvChannelsPick(chs: List<TvChannels.Ch>) {
-        if (chs.isEmpty()) {
-            AlertDialog.Builder(this).setTitle("Kênh trên màn hình chính")
-                .setMessage("Chưa thấy ứng dụng nào đăng kênh lên màn hình chính. Hãy mở ứng dụng xem TV (VTV Go, FPT Play, YouTube...) một lần để ứng dụng tạo kênh, rồi quay lại mục này.\n\n" +
-                    "Nếu vẫn trống thì TV này không chia sẻ kênh của ứng dụng cho launcher khác.")
-                .setPositiveButton("Đóng", null).show()
-            return
-        }
-        val sel = TvChannels.selected(this).toSet()
-        val checked = BooleanArray(chs.size) { chs[it].id in sel }
-        AlertDialog.Builder(this).setTitle("Chọn kênh hiện ở màn hình chính (${chs.size})")
-            .setMultiChoiceItems(chs.map { it.label }.toTypedArray(), checked) { _, i, v -> checked[i] = v }
-            .setPositiveButton("Lưu") { _, _ -> TvChannels.setSelected(this, chs.filterIndexed { i, _ -> checked[i] }.map { it.id }); toast(this, "Đã lưu") }
-            .setNegativeButton("Đóng", null).setOnDismissListener { build() }.show()
-    }
-
-    private fun tvPermHelp() {
-        AlertDialog.Builder(this).setTitle("Cần cấp quyền đọc kênh")
-            .setMessage("TV chưa cấp quyền đọc danh sách kênh cho TV Launcher. Nếu TV không hiện hộp thoại xin quyền, hãy cấp bằng máy tính qua adb:\n\n" +
-                "adb shell pm grant $packageName ${TvChannels.PERM}\n\nCấp xong quay lại mục này để chọn kênh.")
-            .setPositiveButton("Đóng", null).show()
-    }
-
-    // Danh sách tất cả ứng dụng đã ẩn: tích chọn từng ứng dụng để bỏ ẩn, hoặc bỏ ẩn tất cả
+    // Ẩn / hiện ứng dụng: danh sách mọi ứng dụng, tích = đang ẩn. Bấm Lưu để áp dụng, hoặc bỏ ẩn tất cả
     private fun hiddenAppsDialog() {
-        val hidden = Apps.loadAll(this).filter { Apps.isHidden(this, it.pkg) }
-        if (hidden.isEmpty()) { toast(this, "Không có ứng dụng nào đang ẩn"); return }
-        val checked = BooleanArray(hidden.size)
-        AlertDialog.Builder(this).setTitle("Ứng dụng đã ẩn (${hidden.size})")
-            .setMultiChoiceItems(hidden.map { it.label }.toTypedArray(), checked) { _, i, v -> checked[i] = v }
-            .setPositiveButton("Bỏ ẩn ứng dụng đã chọn") { _, _ ->
-                val sel = hidden.filterIndexed { i, _ -> checked[i] }
-                if (sel.isEmpty()) toast(this, "Chưa tích chọn ứng dụng nào")
-                else { sel.forEach { Apps.setHidden(this, it.pkg, false) }; toast(this, "Đã bỏ ẩn ${sel.size} ứng dụng") }
+        val apps = Apps.loadAll(this)
+        val was = BooleanArray(apps.size) { Apps.isHidden(this, apps[it].pkg) }
+        val checked = was.copyOf()
+        AlertDialog.Builder(this).setTitle("Ẩn / hiện ứng dụng (tích = ẩn)")
+            .setMultiChoiceItems(apps.map { it.label }.toTypedArray(), checked) { _, i, v -> checked[i] = v }
+            .setPositiveButton("Lưu") { _, _ ->
+                var n = 0
+                apps.forEachIndexed { i, a -> if (checked[i] != was[i]) { Apps.setHidden(this, a.pkg, checked[i]); n++ } }
+                toast(this, if (n == 0) "Không có thay đổi" else "Đã cập nhật $n ứng dụng"); build()
             }
-            .setNeutralButton("Bỏ ẩn tất cả ứng dụng") { _, _ -> Apps.showAllApps(this); toast(this, "Đã bỏ ẩn tất cả ứng dụng") }
+            .setNeutralButton("Bỏ ẩn tất cả") { _, _ -> Apps.showAllApps(this); toast(this, "Đã bỏ ẩn tất cả ứng dụng"); build() }
             .setNegativeButton("Đóng", null).show()
+    }
+
+    // Gỡ cài đặt (xoá) ứng dụng: chọn ứng dụng, nhập PIN nếu có khoá, rồi để hệ thống hỏi xác nhận
+    private fun uninstallDialog() {
+        pickApp("Chọn ứng dụng cần gỡ cài đặt", Apps.loadAll(this).filter { it.pkg != packageName }) { a ->
+            guard(this) {
+                if (!safeStart(this, Intent(Intent.ACTION_DELETE, Uri.parse("package:${a.pkg}")))) toast(this, "TV không cho gỡ ứng dụng ở đây")
+            }
+        }
     }
 
     private fun bootAppLabel(): String {
@@ -375,7 +398,6 @@ class SettingsActivity : VActivity() {
     }
 
     override fun onRequestPermissionsResult(rc: Int, p: Array<out String>, r: IntArray) {
-        if (rc == 78) { if (r.isNotEmpty() && r[0] == PackageManager.PERMISSION_GRANTED) tvChannelsDialog() else tvPermHelp(); return }
         if (rc == 77) { if (r.isNotEmpty() && r[0] == PackageManager.PERMISSION_GRANTED) showDir(null, pendingVideo) else toast(this, "Cần cấp quyền đọc bộ nhớ để chọn tệp") }
     }
 
@@ -494,7 +516,7 @@ class SettingsActivity : VActivity() {
         fun t(txt: String, sz: Float, col: Int = Color.WHITE) = TextView(this).apply { text = txt; textSize = sz; setTextColor(col); setPadding(0, dp(4), 0, dp(4)) }
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; setPadding(dp(24), dp(16), dp(24), dp(16))
-            addView(t("TV Launcher - Phiên bản 1.7", 18f))
+            addView(t("TV Launcher - Phiên bản $APP_VERSION", 18f))
             addView(t("Liên hệ tác giả", 16f, 0xFF4D6BFF.toInt()))
             addView(t("Facebook: Lộc Hưng", 16f))
             addView(t("Zalo: 0349353193", 16f))
@@ -508,7 +530,7 @@ class SettingsActivity : VActivity() {
     /** Hỏi xác nhận trước khi khôi phục toàn bộ cài đặt */
     private fun confirmReset() {
         AlertDialog.Builder(this).setTitle("Khôi phục cài đặt TV Launcher")
-            .setMessage("Toàn bộ cài đặt (giao diện, ảnh nền, tiện ích, mục Yêu thích, ứng dụng đã ẩn...) sẽ về mặc định. Mã PIN và các ứng dụng đã khoá được giữ nguyên.")
+            .setMessage("Toàn bộ cài đặt (giao diện, ảnh nền, tiện ích, mục Yêu thích, các mục tuỳ chỉnh, ứng dụng đã ẩn...) sẽ về mặc định. Mã PIN và các ứng dụng đã khoá được giữ nguyên.")
             .setPositiveButton("Khôi phục") { _, _ -> resetAll() }
             .setNegativeButton("Huỷ", null).show()
     }
@@ -522,16 +544,29 @@ class SettingsActivity : VActivity() {
 
     private fun lockDialog() {
         if (Apps.str(this, "pin") == null) { setupLock(this, true) { build() }; return }
-        AlertDialog.Builder(this).setTitle("Khoá ứng dụng").setItems(arrayOf("Đổi Gmail khôi phục", "Tắt khoá ứng dụng")) { _, i ->
-            guard(this) {
-                if (i == 1) { Apps.del(this, "pin", "pin_mail", "locked"); build() }
-                else {
-                    val mail = mailField(this, Apps.str(this, "pin_mail"))
-                    AlertDialog.Builder(this).setTitle("Gmail khôi phục").setView(column(this, mail)).setPositiveButton("Lưu") { _, _ ->
-                        if (validMail(mail.text.toString().trim())) Apps.putStr(this, "pin_mail", mail.text.toString().trim()) else toast(this, "Gmail không hợp lệ") }
-                        .setNegativeButton("Huỷ", null).show()
-                }
-            }
+        val hasMail = Apps.str(this, "pin_mail") != null
+        val labels = ArrayList<String>(); val actions = ArrayList<() -> Unit>()
+        fun add(l: String, a: () -> Unit) { labels.add(l); actions.add(a) }
+        add("Đổi mã PIN (chọn 4 hoặc 8 số)") { setupLock(this, false) { toast(this, "Đã đổi mã PIN"); build() } }
+        add(if (hasMail) "Đổi Gmail khôi phục" else "Thêm Gmail khôi phục (để lấy lại mã khi quên)") { mailDialog() }
+        if (hasMail) add("Bỏ Gmail khôi phục (quên mã sẽ không lấy lại được)") { Apps.del(this, "pin_mail"); toast(this, "Đã bỏ Gmail khôi phục") }
+        add("Tắt khoá ứng dụng") { Apps.del(this, "pin", "pin_len", "pin_mail", "locked"); build() }
+        AlertDialog.Builder(this).setTitle("Khoá ứng dụng").setItems(labels.toTypedArray()) { _, i ->
+            guard(this) { actions[i]() }
         }.show()
+    }
+
+    private fun mailDialog() {
+        val mail = mailField(this, Apps.str(this, "pin_mail"))
+        val dlg = AlertDialog.Builder(this).setTitle("Gmail khôi phục").setView(column(this, mail))
+            .setPositiveButton("Lưu", null).setNegativeButton("Huỷ", null).create()
+        dlg.setOnShowListener {
+            dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val m = mail.text.toString().trim()
+                if (validMail(m)) { Apps.putStr(this, "pin_mail", m); toast(this, "Đã lưu Gmail khôi phục"); dlg.dismiss() }
+                else toast(this, "Gmail không hợp lệ")
+            }
+        }
+        dlg.show()
     }
 }
