@@ -50,7 +50,7 @@ fun guard(c: Context, ok: () -> Unit) {
     if (pin == null) { ok(); return }
     val n = pinLen(c)
     val et = numField(c, "Nhập mã PIN ($n số)", n)
-    val b = AlertDialog.Builder(c).setTitle("Khoá ứng dụng").setView(column(c, et))
+    val b = GlassBuilder(c).setTitle("Khoá ứng dụng").setView(column(c, et))
         .setPositiveButton("OK") { _, _ -> if (sha(et.text.toString()) == pin) ok() else toast(c, "Sai mã PIN") }
         .setNegativeButton("Huỷ", null).setCancelable(false)
     if (Apps.str(c, "pin_mail") != null && RECOVERY_URL.isNotEmpty()) b.setNeutralButton("Quên mã?") { _, _ -> recoverPin(c) { ok() } }
@@ -88,7 +88,7 @@ fun setupLock(c: Context, askMail: Boolean, done: () -> Unit) {
         useMail = cb; mail = m
         views.add(cb); views.add(m); views.add(note)
     }
-    val dlg = AlertDialog.Builder(c).setTitle(if (askMail) "Bật khoá ứng dụng" else "Đặt mã PIN mới")
+    val dlg = GlassBuilder(c).setTitle(if (askMail) "Bật khoá ứng dụng" else "Đặt mã PIN mới")
         .setView(ScrollView(c).apply { addView(column(c, *views.toTypedArray())) })
         .setPositiveButton("Lưu", null).setNegativeButton("Huỷ", null).setCancelable(false).create()
     // Nhập sai thì báo lỗi nhưng KHÔNG đóng hộp thoại, đỡ phải chọn lại từ đầu
@@ -106,7 +106,7 @@ fun setupLock(c: Context, askMail: Boolean, done: () -> Unit) {
             }
         }
     }
-    dlg.show()
+    dlg.show(); glassify(dlg)
 }
 
 /** Quên PIN: gửi mã 6 số tới Gmail đã đăng ký, nhập đúng mã thì đặt lại PIN (chọn lại 4 hoặc 8 số) */
@@ -130,7 +130,7 @@ fun recoverPin(c: Context, done: () -> Unit) {
             }
             Apps.putStr(c, "rc_hash", sha(code)); Apps.putStr(c, "rc_exp", (System.currentTimeMillis() + 600000).toString())
             val et = numField(c, "Mã 6 số", 6)
-            AlertDialog.Builder(c).setTitle("Nhập mã đã gửi tới $mail").setView(column(c, et))
+            GlassBuilder(c).setTitle("Nhập mã đã gửi tới $mail").setView(column(c, et))
                 .setPositiveButton("Xác nhận") { _, _ ->
                     val valid = sha(et.text.toString()) == Apps.str(c, "rc_hash") && System.currentTimeMillis() < (Apps.str(c, "rc_exp")?.toLong() ?: 0L)
                     Apps.del(c, "rc_hash", "rc_exp")
@@ -213,9 +213,10 @@ class SettingsActivity : VActivity() {
 
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
-        list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(120), dp(20), dp(120), dp(40)) }
-        scroll = ScrollView(this).apply { setBackgroundColor(Color.TRANSPARENT); addView(list) }   // trong suốt hoàn toàn, không còn lớp phủ tối
-        setContentView(scroll)
+        list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(24), dp(16), dp(24), dp(24)) }
+        // Lớp phủ kính (giống bảng menu) đặt sau danh sách, chừa lề hai bên để vẫn thấy ảnh nền
+        scroll = ScrollView(this).apply { background = glassPanel(this@SettingsActivity); addView(list) }
+        setContentView(FrameLayout(this).apply { addView(scroll, FrameLayout.LayoutParams(-1, -1).apply { setMargins(dp(96), dp(24), dp(96), dp(24)) }) })
         build()
         if (Apps.str(this, "home_fail") != null) { Apps.del(this, "home_fail"); list.post { homeFailDialog() } }
         // Sau khi màn hình được tạo lại (đổi kích cỡ TV...), đưa con trỏ về đúng dòng đang chọn thay vì về đầu danh sách
@@ -255,6 +256,7 @@ class SettingsActivity : VActivity() {
         val keepIdx = focusedRow()
         list.removeAllViews()
         list.addView(TextView(this).apply { text = "TV Launcher"; textSize = 24f; setTextColor(0xFF4D6BFF.toInt()); setPadding(dp(24), 0, 0, dp(12)); shade() })
+        val firstRow = list.childCount   // các dòng cài đặt bắt đầu từ đây (sau tiêu đề), sẽ được xếp abc ở cuối hàm
         item("Giới thiệu", "v$APP_VERSION", false, null, null) { showAbout() }
         item("Chuyển đầu vào (HDMI/AV)", null, false, null, null) { pickInput(this) }
         item("Cài đặt hệ thống", null, false, null, null) { openSystemSettings(this) }
@@ -284,6 +286,10 @@ class SettingsActivity : VActivity() {
         choice("Cỡ chữ", "fontsz", arrayOf("Vừa", "Lớn", "Rất lớn"), 0)
         item("Khoá ứng dụng", if (Apps.str(this, "pin") == null) "Tắt" else "Đang bật (PIN ${pinLen(this)} số)", true, null, null) { lockDialog() }
         item("Khôi phục cài đặt TV Launcher", null, true, null, null) { guard(this) { confirmReset() } }
+        // Xếp tất cả các dòng cài đặt theo thứ tự abc tiếng Việt (cùng cách xếp với danh sách ứng dụng: bỏ dấu, Đ = D), tiêu đề và dòng cuối trang giữ nguyên chỗ
+        val rows = (firstRow until list.childCount).map { list.getChildAt(it) }
+        rows.forEach { list.removeView(it) }
+        rows.sortedVi { (it.tag as? String) ?: "" }.forEach { list.addView(it) }
         list.addView(TextView(this).apply { text = "TV Launcher By Lộc Hưng"; textSize = 14f; setTextColor(Color.WHITE); gravity = Gravity.CENTER; setPadding(0, dp(24), 0, 0); shade() })
         // Trả lại đúng vị trí cuộn và dòng đang chọn như trước khi dựng lại
         if (keepY > 0 || keepIdx >= 0) afterLayout {
@@ -313,7 +319,7 @@ class SettingsActivity : VActivity() {
         RES_TIERS.forEach { t -> labels.add(if (modeForTier(this, t.key) == null) t.label + "  •  TV không hỗ trợ" else t.label) }
         labels.add("Vì sao TV 4K chỉ hiện Full HD?")
         val checked = if (cur == null) 0 else RES_TIERS.indexOfFirst { it.key == cur }.let { if (it < 0) 0 else it + 1 }
-        AlertDialog.Builder(this).setTitle("Độ phân giải màn hình")
+        GlassBuilder(this).setTitle("Độ phân giải màn hình")
             .setSingleChoiceItems(labels.toTypedArray(), checked) { d, i ->
                 d.dismiss()
                 when {
@@ -341,7 +347,7 @@ class SettingsActivity : VActivity() {
     private fun currentModeId(): Int = if (Build.VERSION.SDK_INT >= 23) try { windowManager.defaultDisplay.mode.modeId } catch (e: Exception) { -1 } else -1
 
     private fun resolutionHelp() {
-        AlertDialog.Builder(this).setTitle("Vì sao TV 4K chỉ hiện Full HD?").setMessage(
+        GlassBuilder(this).setTitle("Vì sao TV 4K chỉ hiện Full HD?").setMessage(
             "Nhiều TV Android (Xiaomi, TCL, Sony...) vẽ giao diện ở Full HD 1920x1080 rồi tự phóng lên 4K khi hiển thị, nên ứng dụng chỉ đọc được 1920x1080. " +
             "Đây không phải lỗi của TV Launcher. Phim/video 4K trong YouTube, Netflix... vẫn phát đúng 4K.\n\n" +
             "Ứng dụng không tự đổi được độ phân giải giao diện của hệ thống. Chọn Full HD / 2K / 4K chỉ là xin TV đổi chế độ xuất hình khi đang ở TV Launcher, " +
@@ -357,6 +363,7 @@ class SettingsActivity : VActivity() {
 
     private fun item(title: String, value: String?, red: Boolean, checked: Boolean?, reset: (() -> Unit)?, click: () -> Unit) {
         list.addView(LinearLayout(this).apply {
+            tag = title   // tên dòng, dùng để xếp abc trong build()
             gravity = Gravity.CENTER_VERTICAL; isFocusable = true; isClickable = true
             setPadding(dp(24), dp(16), dp(24), dp(16))
             addView(TextView(context).apply { text = title; textSize = 20f * Apps.fs(this@SettingsActivity); setTextColor(if (red) 0xFFFF4444.toInt() else Color.WHITE); shade() }, LinearLayout.LayoutParams(0, -2, 1f))
@@ -371,7 +378,7 @@ class SettingsActivity : VActivity() {
 
     private fun choice(title: String, key: String, labels: Array<String>, def: Int, rc: Boolean = false) {
         item(title, labels[Apps.int(this, key, def)], false, null, { Apps.del(this, key); if (rc) recreate() }) {
-            AlertDialog.Builder(this).setTitle(title).setSingleChoiceItems(labels, Apps.int(this, key, def)) { d, i -> Apps.putInt(this, key, i); d.dismiss(); if (rc) recreate() else build() }.show()
+            GlassBuilder(this).setTitle(title).setSingleChoiceItems(labels, Apps.int(this, key, def)) { d, i -> Apps.putInt(this, key, i); d.dismiss(); if (rc) recreate() else build() }.show()
         }
     }
 
@@ -384,7 +391,7 @@ class SettingsActivity : VActivity() {
         val apps = Apps.loadAll(this)
         val was = BooleanArray(apps.size) { Apps.isHidden(this, apps[it].pkg) }
         val checked = was.copyOf()
-        AlertDialog.Builder(this).setTitle("Ẩn / hiện ứng dụng (tích = ẩn)")
+        GlassBuilder(this).setTitle("Ẩn / hiện ứng dụng (tích = ẩn)")
             .setMultiChoiceItems(apps.map { it.label }.toTypedArray(), checked) { _, i, v -> checked[i] = v }
             .setPositiveButton("Lưu") { _, _ ->
                 var n = 0
@@ -428,12 +435,12 @@ class SettingsActivity : VActivity() {
             cur.startsWith("in:") -> ins.indexOfFirst { "in:" + it.first == cur }.let { if (it < 0) ins.size + 1 else it }
             else -> ins.size
         }
-        val dlg = AlertDialog.Builder(this).setTitle("Khởi động cùng thiết bị")
+        val dlg = GlassBuilder(this).setTitle("Khởi động cùng thiết bị")
             .setSingleChoiceItems(labels.toTypedArray(), checked) { d, i ->
                 when { i < ins.size -> Apps.putStr(this, "boot_src", "in:" + ins[i].first); i == ins.size -> Apps.putStr(this, "boot_src", "app"); else -> Apps.putStr(this, "boot_src", "off") }
                 d.dismiss(); build()
             }.create()
-        dlg.show()
+        dlg.show(); glassify(dlg)
         dlg.listView.setOnItemLongClickListener { _, _, pos, _ -> if (pos == ins.size) { dlg.dismiss(); pickBootApp() }; true }
     }
 
@@ -446,7 +453,7 @@ class SettingsActivity : VActivity() {
                 addView(TextView(context).apply { text = apps[p].label; textSize = 18f; setPadding(dp(16), 0, 0, 0) })
             }
         }
-        AlertDialog.Builder(this).setTitle("Chọn một ứng dụng").setAdapter(ad) { _, i ->
+        GlassBuilder(this).setTitle("Chọn một ứng dụng").setAdapter(ad) { _, i ->
             Apps.putStr(this, "boot_app", apps[i].pkg); Apps.putStr(this, "boot_src", "app"); build()
         }.show()
     }
@@ -462,7 +469,7 @@ class SettingsActivity : VActivity() {
         val i1 = Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType(mime)
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
         val i2 = Intent(Intent.ACTION_GET_CONTENT).addCategory(Intent.CATEGORY_OPENABLE).setType(mime)
-        AlertDialog.Builder(this).setTitle("Chọn tệp từ đâu?").setItems(arrayOf("Trình chọn tệp của TV", "Duyệt bộ nhớ / USB (khuyên dùng cho TV Xiaomi)")) { _, i ->
+        GlassBuilder(this).setTitle("Chọn tệp từ đâu?").setItems(arrayOf("Trình chọn tệp của TV", "Duyệt bộ nhớ / USB (khuyên dùng cho TV Xiaomi)")) { _, i ->
             if (i == 1) { browse(rc == 2); return@setItems }
             try { startActivityForResult(i1, rc) } catch (e: Exception) {
                 try { startActivityForResult(i2, rc) } catch (e2: Exception) { toast(this, "TV không có trình chọn tệp, chuyển sang duyệt bộ nhớ"); browse(rc == 2) }
@@ -501,7 +508,7 @@ class SettingsActivity : VActivity() {
         }
         val up = dir != null
         val items = (if (up) listOf("« Quay lại") else emptyList<String>()) + labels
-        AlertDialog.Builder(this).setTitle(dir?.path ?: "Chọn nơi lưu trữ").setItems(items.toTypedArray()) { _, i ->
+        GlassBuilder(this).setTitle(dir?.path ?: "Chọn nơi lưu trữ").setItems(items.toTypedArray()) { _, i ->
             if (up && i == 0) {
                 val parent = dir!!.parentFile
                 showDir(if (parent == null || roots().any { it == dir }) null else parent, video)
@@ -538,7 +545,7 @@ class SettingsActivity : VActivity() {
         val off = HomeGuard.excluded(this)
         val checked = BooleanArray(apps.size) { apps[it].first !in off }
         val on = Apps.bool(this, "hg_on", false)
-        val b = AlertDialog.Builder(this).setTitle("Chặn về giao diện gốc (tích = chặn)")
+        val b = GlassBuilder(this).setTitle("Chặn về giao diện gốc (tích = chặn)")
             .setMultiChoiceItems(apps.map { it.second + "  (" + it.first + ")" }.toTypedArray(), checked) { _, i, v -> checked[i] = v }
             .setPositiveButton(if (on) "Lưu" else "Bật chặn") { _, _ ->
                 if (checked.none { it }) { toast(this, "Chưa tích giao diện nào để chặn"); return@setPositiveButton }
@@ -574,7 +581,7 @@ class SettingsActivity : VActivity() {
         val on = VoiceGuard.on(this)
         val off = VoiceGuard.excluded(this)
         val checked = BooleanArray(apps.size) { apps[it].first !in off }
-        val b = AlertDialog.Builder(this).setTitle("Chặn voice gốc (tích = chặn)")
+        val b = GlassBuilder(this).setTitle("Chặn voice gốc (tích = chặn)")
         if (apps.isEmpty()) b.setMessage("Không thấy trợ lý giọng nói gốc nào trong danh sách ứng dụng. Vẫn có thể bật để nút micro trên điều khiển luôn mở trợ lý thay thế " +
             "(chọn ở mục \"Trợ lý giọng nói\", hoặc Kiki / Google Assistant nếu có).")
         else b.setMultiChoiceItems(apps.map { it.second + "  (" + it.first + ")" }.toTypedArray(), checked) { _, i, v -> checked[i] = v }
@@ -606,7 +613,7 @@ class SettingsActivity : VActivity() {
             "\n• Voice đang chặn: " + (VoiceGuard.assistants(this).filter { it.first !in VoiceGuard.excluded(this) }.let { l -> if (l.isEmpty()) "không có" else l.joinToString(", ") { it.second + " (" + it.first + ")" } }) +
             "\n• Số lần bắt nút Home: ${HomeGuard.homeKeys}" +
             "\n\nSự kiện gần nhất (mới nhất ở trên):\n" + notes.joinToString("\n")
-        AlertDialog.Builder(this).setTitle("Kiểm tra chặn giao diện gốc").setMessage(msg)
+        GlassBuilder(this).setTitle("Kiểm tra chặn giao diện gốc").setMessage(msg)
             .setPositiveButton("Đóng", null)
             .setNeutralButton("Làm mới") { _, _ -> guardInfoDialog() }
             .show()
@@ -614,7 +621,7 @@ class SettingsActivity : VActivity() {
 
     private fun guardEnableDialog() {
         val comp = "$packageName/${HomeGuardService::class.java.name}"
-        AlertDialog.Builder(this).setTitle("Bật dịch vụ trợ năng để chặn")
+        GlassBuilder(this).setTitle("Bật dịch vụ trợ năng để chặn")
             .setMessage(
                 "Android không cho ứng dụng tự chặn giao diện khác, nên cần bật dịch vụ trợ năng \"TV Launcher - Chặn giao diện gốc\". " +
                 "Dịch vụ chỉ biết giao diện nào đang hiện lên để đưa về TV Launcher, không đọc nội dung màn hình.\n\n" +
@@ -655,7 +662,7 @@ class SettingsActivity : VActivity() {
             !HomeGuard.serviceEnabled(this) -> "TV Launcher đã có quyền nhưng hệ thống không cho bật dịch vụ trợ năng."
             else -> "Dịch vụ đã được bật trong cài đặt nhưng hệ thống chưa chạy nó. Thử tắt rồi bật lại, hoặc khởi động lại TV."
         }
-        AlertDialog.Builder(this).setTitle("Thất bại: chưa bật được chặn")
+        GlassBuilder(this).setTitle("Thất bại: chưa bật được chặn")
             .setMessage("$why\n\nChặn chỉ hoạt động khi dịch vụ trợ năng đang chạy.")
             .setPositiveButton("Xem hướng dẫn") { _, _ -> guardEnableDialog() }
             .setNegativeButton("Đóng", null).show()
@@ -743,7 +750,7 @@ class SettingsActivity : VActivity() {
             "Nếu hiện bảng chọn có nút \"Luôn\" và \"Một lần\": chọn TV Launcher rồi bấm \"Luôn\" (bấm \"Một lần\" thì chỉ mở TV Launcher chứ không lưu). " +
             "Nếu không hiện bảng chọn thì giao diện gốc đang giữ mặc định: bấm \"Hướng dẫn thủ công\" để xoá mặc định của nó trước.\n\n"
         val tip = if (Apps.bool(this, "hg_on", false)) "" else "Mẹo: bật \"Chặn về giao diện gốc của TV\" thì nút Home trên điều khiển vẫn về TV Launcher dù chưa đặt mặc định."
-        AlertDialog.Builder(this).setTitle("Chưa thành công: chưa đặt được mặc định")
+        GlassBuilder(this).setTitle("Chưa thành công: chưa đặt được mặc định")
             .setMessage("Hệ thống đang dùng: $curName" + (if (cur != null) " ($cur)" else "") + "\n\n$why" +
                 "Các giao diện chính trên TV:\n" + (if (rows.isEmpty()) "không đọc được" else rows.joinToString("\n") { "• ${it.label} (${it.pkg}) • ưu tiên ${it.priority}" }) +
                 (if (tip.isEmpty()) "" else "\n\n$tip"))
@@ -754,7 +761,7 @@ class SettingsActivity : VActivity() {
 
     private fun homeGuide(cur: String?) {
         val none = cur == null || cur == "android"
-        val b = AlertDialog.Builder(this).setTitle("Đặt TV Launcher làm giao diện mặc định")
+        val b = GlassBuilder(this).setTitle("Đặt TV Launcher làm giao diện mặc định")
             .setMessage(
                 "TV này không có màn hình chọn giao diện chính, hãy làm theo 1 trong 2 cách:\n\n" +
                 (if (none) "Cách 1: bấm \"Mở màn hình chọn\" bên dưới, chọn TV Launcher rồi bấm \"Luôn\" (Always).\n\n"
@@ -770,7 +777,7 @@ class SettingsActivity : VActivity() {
     }
 
     private fun xiaomiHelp() {
-        AlertDialog.Builder(this).setTitle("Hướng dẫn cho TV Xiaomi nội địa").setMessage(
+        GlassBuilder(this).setTitle("Hướng dẫn cho TV Xiaomi nội địa").setMessage(
             "• Phím Menu (≡) trên điều khiển mở nhanh cài đặt của TV Launcher.\n" +
             "• Nút Home của Xiaomi có thể vẫn về giao diện gốc (PatchWall). Hãy mở TV Launcher từ danh sách ứng dụng.\n" +
             "• Muốn nút Home mở thẳng TV Launcher: vào Cài đặt hệ thống tìm mục ứng dụng mặc định / màn hình chính (nếu TV có). " +
@@ -825,7 +832,7 @@ class SettingsActivity : VActivity() {
         fun show(src: List<android.content.pm.ResolveInfo>, more: Boolean) {
             val names = src.map { it.loadLabel(pm).toString() + "  •  " + it.activityInfo.packageName }.toMutableList()
             if (more) names.add("Xem tất cả ứng dụng…")
-            AlertDialog.Builder(this).setTitle("Chọn màn hình Cài đặt tivi (hình ảnh, âm thanh...)")
+            GlassBuilder(this).setTitle("Chọn màn hình Cài đặt tivi (hình ảnh, âm thanh...)")
                 .setItems(names.toTypedArray()) { _, i ->
                     if (i >= src.size) show(all, false)
                     else {
@@ -848,7 +855,7 @@ class SettingsActivity : VActivity() {
     /** Chọn ứng dụng cho nút micro. Chỉ liệt kê ứng dụng có hỗ trợ giọng nói; chọn xong bấm Lưu mới áp dụng */
     private fun chooseVoice() {
         val apps = VoiceGuard.capable(this)
-        val b = AlertDialog.Builder(this).setTitle("Trợ lý giọng nói")
+        val b = GlassBuilder(this).setTitle("Trợ lý giọng nói")
         if (apps.isEmpty()) {
             b.setMessage("Không thấy ứng dụng nào hỗ trợ giọng nói trên TV này. Hãy cài một trợ lý giọng nói (ví dụ Kiki hoặc Google Assistant) rồi quay lại đây.")
                 .setPositiveButton("Đóng", null).show()
@@ -874,7 +881,7 @@ class SettingsActivity : VActivity() {
 
     private fun accessibilityDialog() {
         val l = enabledServices()
-        AlertDialog.Builder(this).setTitle("Dịch vụ trợ năng")
+        GlassBuilder(this).setTitle("Dịch vụ trợ năng")
             .setMessage(if (l.isEmpty()) "Chưa bật dịch vụ trợ năng nào." else "Đang bật:\n" + l.joinToString("\n") { "• $it" })
             .setPositiveButton("Mở cài đặt trợ năng") { _, _ -> openAccessibilitySettings() }
             .setNegativeButton("Đóng", null).show()
@@ -882,7 +889,7 @@ class SettingsActivity : VActivity() {
 
     private fun permissionDialog() {
         val overlay = if (Build.VERSION.SDK_INT >= 23) Settings.canDrawOverlays(this) else true
-        val b = AlertDialog.Builder(this).setTitle("Quyền ứng dụng")
+        val b = GlassBuilder(this).setTitle("Quyền ứng dụng")
             .setMessage("• Truy cập Internet (thời tiết, gửi mã Gmail)\n• Xem danh sách ứng dụng đã cài\n• Gỡ cài đặt ứng dụng\n• Khởi động cùng thiết bị\n• Dịch vụ trợ năng (chỉ khi bật \"Chặn về giao diện gốc\" hoặc \"Chặn voice gốc\")\n• Đọc bộ nhớ/USB (khi chọn ảnh, video nền)\n• Hiển thị trên ứng dụng khác (giúp tự khởi động ổn định): " +
                 (if (overlay) "đã cấp" else "chưa cấp") +
                 "\n• Ghi cài đặt bảo mật (tự bật dịch vụ trợ năng, chỉ cấp được bằng ADB): " + (if (HomeGuard.canWriteSecure(this)) "đã cấp" else "chưa cấp"))
@@ -904,11 +911,11 @@ class SettingsActivity : VActivity() {
         openSettings(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$pkg")))
 
     private fun pickApp(title: String, apps: List<AppItem>, onPick: (AppItem) -> Unit) {
-        AlertDialog.Builder(this).setTitle(title).setItems(apps.map { it.label }.toTypedArray()) { _, i -> onPick(apps[i]) }.show()
+        GlassBuilder(this).setTitle(title).setItems(apps.map { it.label }.toTypedArray()) { _, i -> onPick(apps[i]) }.show()
     }
 
     private fun unknownDialog() {
-        AlertDialog.Builder(this).setTitle("Cài app không rõ nguồn gốc")
+        GlassBuilder(this).setTitle("Cài app không rõ nguồn gốc")
             .setItems(arrayOf("Cho phép TV Launcher cài app", "Cho phép cho app khác…", "Mở cài đặt bảo mật hệ thống")) { _, i ->
                 when (i) {
                     0 -> unknownSources(packageName)
@@ -930,12 +937,12 @@ class SettingsActivity : VActivity() {
             addView(ImageView(context).apply { setImageResource(R.drawable.qr_donate); adjustViewBounds = true }, LinearLayout.LayoutParams(dp(300), -2))
             addView(t("Cảm ơn bạn đã sử dụng!", 14f))
         }
-        AlertDialog.Builder(this).setView(ScrollView(this).apply { setBackgroundColor(0xFF1C1C24.toInt()); addView(box) }).setPositiveButton("Đóng", null).show()
+        GlassBuilder(this).setView(ScrollView(this).apply { addView(box) }).setPositiveButton("Đóng", null).show()
     }
 
     /** Hỏi xác nhận trước khi khôi phục toàn bộ cài đặt */
     private fun confirmReset() {
-        AlertDialog.Builder(this).setTitle("Khôi phục cài đặt TV Launcher")
+        GlassBuilder(this).setTitle("Khôi phục cài đặt TV Launcher")
             .setMessage("Toàn bộ cài đặt (giao diện, ảnh nền, tiện ích, mục Yêu thích, các mục tuỳ chỉnh, ứng dụng đã ẩn...) sẽ về mặc định. Mã PIN và các ứng dụng đã khoá được giữ nguyên.")
             .setPositiveButton("Khôi phục") { _, _ -> resetAll() }
             .setNegativeButton("Huỷ", null).show()
@@ -957,14 +964,14 @@ class SettingsActivity : VActivity() {
         add(if (hasMail) "Đổi Gmail khôi phục" else "Thêm Gmail khôi phục (để lấy lại mã khi quên)") { mailDialog() }
         if (hasMail) add("Bỏ Gmail khôi phục (quên mã sẽ không lấy lại được)") { Apps.del(this, "pin_mail"); toast(this, "Đã bỏ Gmail khôi phục") }
         add("Tắt khoá ứng dụng") { Apps.del(this, "pin", "pin_len", "pin_mail", "locked"); build() }
-        AlertDialog.Builder(this).setTitle("Khoá ứng dụng").setItems(labels.toTypedArray()) { _, i ->
+        GlassBuilder(this).setTitle("Khoá ứng dụng").setItems(labels.toTypedArray()) { _, i ->
             guard(this) { actions[i]() }
         }.show()
     }
 
     private fun mailDialog() {
         val mail = mailField(this, Apps.str(this, "pin_mail"))
-        val dlg = AlertDialog.Builder(this).setTitle("Gmail khôi phục").setView(column(this, mail))
+        val dlg = GlassBuilder(this).setTitle("Gmail khôi phục").setView(column(this, mail))
             .setPositiveButton("Lưu", null).setNegativeButton("Huỷ", null).create()
         dlg.setOnShowListener {
             dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
@@ -973,6 +980,6 @@ class SettingsActivity : VActivity() {
                 else toast(this, "Gmail không hợp lệ")
             }
         }
-        dlg.show()
+        dlg.show(); glassify(dlg)
     }
 }

@@ -81,10 +81,10 @@ private fun secLabel(c: Context, pkg: String) = Apps.loadAll(c).firstOrNull { it
 /** Hộp thoại nhập tên mục. ok nhận tên đã gọt gọn; cancel chạy khi bấm Huỷ hoặc Back */
 private fun secNameDialog(c: Context, title: String, start: String, ok: (String) -> Unit, cancel: () -> Unit) {
     val et = EditText(c).apply { hint = "Tên mục (VD: Phim, Game, Nhạc)"; setSingleLine(true); setText(start); setSelection(text.length) }
-    val dlg = AlertDialog.Builder(c).setTitle(title)
+    val dlg = GlassBuilder(c).setTitle(title)
         .setView(LinearLayout(c).apply { setPadding(c.dp(24), c.dp(8), c.dp(24), 0); addView(et, LinearLayout.LayoutParams(-1, -2)) })
         .setPositiveButton("Lưu", null).setNegativeButton("Huỷ") { _, _ -> cancel() }.setOnCancelListener { cancel() }.create()
-    dlg.show()
+    dlg.show(); glassify(dlg)
     dlg.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
         val n = et.text.toString().replace(Regex("\\s+"), " ").trim().take(Secs.MAX_NAME)
         if (n.isEmpty()) { secToast(c, "Nhập tên mục"); return@setOnClickListener }
@@ -102,7 +102,7 @@ fun secListDialog(c: Context, done: () -> Unit) {
         acts.add { secMenu(c, s.id) { secListDialog(c, done) } }
     }
     labels.add("+ Tạo mục mới"); acts.add { secCreate(c) { secListDialog(c, done) } }
-    AlertDialog.Builder(c).setTitle("Mục trên màn hình chính (${l.size})")
+    GlassBuilder(c).setTitle("Mục trên màn hình chính (${l.size})")
         .setItems(labels.toTypedArray()) { _, i -> acts[i]() }
         .setNegativeButton("Đóng") { _, _ -> done() }.setOnCancelListener { done() }.show()
 }
@@ -122,7 +122,7 @@ fun secAddApps(c: Context, id: String, back: () -> Unit) {
     val apps = Apps.load(c).filter { it.pkg !in s.pkgs }
     if (apps.isEmpty()) { secToast(c, "Không còn ứng dụng nào để thêm"); back(); return }
     val checked = BooleanArray(apps.size)
-    AlertDialog.Builder(c).setTitle("Thêm ứng dụng vào ${s.name}")
+    GlassBuilder(c).setTitle("Thêm ứng dụng vào ${s.name}")
         .setMultiChoiceItems(apps.map { it.label }.toTypedArray(), checked) { _, i, v -> checked[i] = v }
         .setPositiveButton("Thêm") { _, _ ->
             val sel = apps.filterIndexed { i, _ -> checked[i] }.map { it.pkg }
@@ -139,7 +139,7 @@ fun secRemoveApps(c: Context, id: String, back: () -> Unit) {
     if (s.pkgs.isEmpty()) { secToast(c, "Mục này chưa có ứng dụng"); back(); return }
     val names = s.pkgs.map { secLabel(c, it) }.toTypedArray()
     val checked = BooleanArray(names.size)
-    AlertDialog.Builder(c).setTitle("Bỏ khỏi ${s.name} (không gỡ cài đặt)")
+    GlassBuilder(c).setTitle("Bỏ khỏi ${s.name} (không gỡ cài đặt)")
         .setMultiChoiceItems(names, checked) { _, i, v -> checked[i] = v }
         .setPositiveButton("Bỏ khỏi mục") { _, _ ->
             val keep = s.pkgs.filterIndexed { i, _ -> !checked[i] }
@@ -165,7 +165,7 @@ fun secOrderDialog(c: Context, id: String, back: () -> Unit) {
     val s = Secs.get(c, id) ?: return back()
     if (s.pkgs.size < 2) { secToast(c, "Cần ít nhất 2 ứng dụng để sắp xếp"); back(); return }
     val names = s.pkgs.mapIndexed { i, p -> "${i + 1}. ${secLabel(c, p)}" }.toTypedArray()
-    AlertDialog.Builder(c).setTitle("Sắp xếp ứng dụng trong ${s.name}")
+    GlassBuilder(c).setTitle("Sắp xếp ứng dụng trong ${s.name}")
         .setItems(names) { _, i -> secMoveMenu(c, id, i) { secOrderDialog(c, id, back) } }
         .setNegativeButton("Xong") { _, _ -> back() }.setOnCancelListener { back() }.show()
 }
@@ -177,21 +177,21 @@ private fun secMoveMenu(c: Context, id: String, i: Int, back: () -> Unit) {
     fun row(t: String, to: Int) { labels.add(t); acts.add { secMoveApp(c, id, i, to); back() } }
     if (i > 0) { row("Chuyển lên đầu", 0); row("Chuyển sang trái một ô", i - 1) }
     if (i < n - 1) { row("Chuyển sang phải một ô", i + 1); row("Chuyển xuống cuối", n - 1) }
-    AlertDialog.Builder(c).setTitle(secLabel(c, s.pkgs[i])).setItems(labels.toTypedArray()) { _, k -> acts[k]() }
+    GlassBuilder(c).setTitle(secLabel(c, s.pkgs[i])).setItems(labels.toTypedArray()) { _, k -> acts[k]() }
         .setNegativeButton("Quay lại") { _, _ -> back() }.setOnCancelListener { back() }.show()
 }
 
 /** Cỡ biểu tượng ứng dụng trong mục (thật sự đổi cỡ, các hàng bên dưới tự dịch chỗ) */
 fun secSizeDialog(c: Context, id: String, back: () -> Unit) {
     val s = Secs.get(c, id) ?: return back()
-    AlertDialog.Builder(c).setTitle("Kích thước biểu tượng: ${s.name}")
+    GlassBuilder(c).setTitle("Kích thước biểu tượng: ${s.name}")
         .setSingleChoiceItems(Secs.SIZE_LABELS, Secs.size(c, id)) { d, i -> Apps.putInt(c, "ssz_$id", i); d.dismiss(); back() }
         .setNegativeButton("Huỷ") { _, _ -> back() }.setOnCancelListener { back() }.show()
 }
 
 private fun secDelete(c: Context, id: String, back: () -> Unit) {
     val s = Secs.get(c, id) ?: return back()
-    AlertDialog.Builder(c).setTitle("Xoá mục ${s.name}?")
+    GlassBuilder(c).setTitle("Xoá mục ${s.name}?")
         .setMessage("Chỉ xoá mục này khỏi màn hình chính. Các ứng dụng trong mục vẫn còn trên TV.")
         .setPositiveButton("Xoá mục") { _, _ -> Secs.delete(c, id); back() }
         .setNegativeButton("Huỷ") { _, _ -> back() }.setOnCancelListener { back() }.show()
@@ -216,7 +216,7 @@ fun secMenu(c: Context, id: String, back: () -> Unit) {
     if (idx > 0) row("Chuyển mục lên trên") { Secs.move(c, id, -1); back() }
     if (idx < l.size - 1) row("Chuyển mục xuống dưới") { Secs.move(c, id, 1); back() }
     row("Xoá mục") { secDelete(c, id, back) }
-    AlertDialog.Builder(c).setTitle(s.name).setItems(labels.toTypedArray()) { _, i -> acts[i]() }
+    GlassBuilder(c).setTitle(s.name).setItems(labels.toTypedArray()) { _, i -> acts[i]() }
         .setNegativeButton("Quay lại") { _, _ -> back() }.setOnCancelListener { back() }.show()
 }
 
@@ -233,7 +233,7 @@ fun secAppMenu(c: Context, id: String, a: AppItem, back: () -> Unit) {
     row("Thêm ứng dụng vào mục") { secAddApps(c, id, back) }
     row("Tuỳ chỉnh mục: ${s.name}") { secMenu(c, id, back) }
     row("Ẩn, khoá, gỡ cài đặt ứng dụng…") { showMenu(c, a, back) }
-    AlertDialog.Builder(c).setTitle(a.label).setItems(labels.toTypedArray()) { _, k -> acts[k]() }.show()
+    GlassBuilder(c).setTitle(a.label).setItems(labels.toTypedArray()) { _, k -> acts[k]() }.show()
 }
 
 /** Từ menu của một ứng dụng (màn hình chính / Tất cả ứng dụng): chọn mục để thêm ứng dụng này vào, hoặc tạo mục mới */
@@ -257,7 +257,7 @@ fun secPickAdd(c: Context, a: AppItem, back: () -> Unit) {
             secToast(c, "Đã tạo mục $n và thêm ${a.label}"); back()
         }, back)
     }
-    AlertDialog.Builder(c).setTitle("Thêm ${a.label} vào mục").setItems(labels.toTypedArray()) { _, i -> acts[i]() }
+    GlassBuilder(c).setTitle("Thêm ${a.label} vào mục").setItems(labels.toTypedArray()) { _, i -> acts[i]() }
         .setNegativeButton("Huỷ", null).show()
 }
 
@@ -273,9 +273,13 @@ fun plusTile(c: Context, mult: Float, onClick: () -> Unit): View = LinearLayout(
         background = GradientDrawable().apply { cornerRadius = c.dp(Apps.radius(c)).toFloat(); setColor(0x22FFFFFF); setStroke(c.dp(2), 0x88FFFFFF.toInt()) }
     }, LinearLayout.LayoutParams(sz, sz))
     addView(TextView(c).apply { text = "Thêm"; setTextColor(Color.WHITE); textSize = 13f * sc * Apps.fs(c); maxLines = 1; gravity = Gravity.CENTER })
+    background = android.graphics.drawable.StateListDrawable().apply {
+        addState(intArrayOf(android.R.attr.state_focused), GradientDrawable().apply { cornerRadius = c.dp(Apps.radius(c) + 4).toFloat(); setColor(0x33FFFFFF) })
+        addState(intArrayOf(), GradientDrawable().apply { setColor(0) })
+    }
+    noSysHighlight()
     setOnFocusChangeListener { v, f ->
         v.scaleX = if (f && !Apps.rm(c)) 1.12f else 1f; v.scaleY = v.scaleX
-        v.background = if (f) GradientDrawable().apply { cornerRadius = c.dp(Apps.radius(c) + 4).toFloat(); setColor(0x33FFFFFF) } else null
     }
     setOnClickListener { onClick() }
 }
