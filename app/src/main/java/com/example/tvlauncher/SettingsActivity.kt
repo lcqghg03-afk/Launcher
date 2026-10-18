@@ -460,7 +460,19 @@ class SettingsActivity : VActivity() {
                     }).apply { setStroke(dp(w), edge) }
                 val cellView = TextView(me).apply {
                     text = (if (isCur) "✓ " else "") + label
-                    textSize = 16f; gravity = Gravity.CENTER; maxLines = 2; setTextColor(Color.WHITE); setTypeface(null, android.graphics.Typeface.BOLD); shade()
+                    textSize = 16f; gravity = Gravity.CENTER; maxLines = 2; setTypeface(null, android.graphics.Typeface.BOLD)
+                    // Chọn màu chữ tương phản với chính ô màu để tên màu luôn dễ đọc.
+                    val previewColor = when {
+                        kind == 1 -> 0xFF202020.toInt() // ô cầu vồng: chữ tối có viền bóng sáng
+                        color == PANEL_GLASS -> Color.WHITE
+                        else -> {
+                            val r = Color.red(color); val g = Color.green(color); val b = Color.blue(color)
+                            if ((0.299 * r + 0.587 * g + 0.114 * b) >= 150) Color.BLACK else Color.WHITE
+                        }
+                    }
+                    setTextColor(previewColor)
+                    if (android.os.Build.VERSION.SDK_INT >= 21) elevation = dp(1).toFloat()
+                    shade()
                     isFocusable = true; isClickable = true
                     background = android.graphics.drawable.StateListDrawable().apply {
                         addState(intArrayOf(android.R.attr.state_focused), box(4, Color.WHITE))
