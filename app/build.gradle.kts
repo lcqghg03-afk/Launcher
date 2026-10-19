@@ -7,7 +7,7 @@ android {
     defaultConfig { applicationId = "com.example.tvlauncher"; minSdk = 21; targetSdk = 28; versionCode = 8; versionName = "1.8" }
     buildTypes {
         // GitHub Actions builds a debug APK; do not reference a local release.jks that is not in the repository.
-        release { isMinifyEnabled = false }
+        release { isMinifyEnabled = false; signingConfig = signingConfigs.getByName("debug") }
         debug { isMinifyEnabled = false }
     }
     // targetSdk 28 là cố ý (đọc USB/bộ nhớ đơn giản trên TV). Lint của Google Play đòi >= 33 nên tắt kiểm tra này khi build
