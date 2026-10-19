@@ -240,25 +240,292 @@ class SettingsActivity : VActivity() {
 
     override fun onCreate(b: Bundle?) {
         super.onCreate(b)
-        list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(24), dp(16), dp(24), dp(24)) }
-        // Lớp phủ kính (giống bảng menu) đặt sau danh sách, chừa lề hai bên để vẫn thấy ảnh nền
-        // ScrollView không tự nhận con trỏ và tắt vệt sáng mặc định của hệ thống: trước đây lúc mới vào, ScrollView giữ con trỏ nên bị phủ một lớp mờ
-        // cho tới khi bấm xuống một dòng. Giờ con trỏ luôn nằm ở một dòng cài đặt nên lúc mới vào và sau khi bấm xuống trông y hệt nhau
-        scroll = ScrollView(this).apply { background = glassPanel(this@SettingsActivity); isFocusable = false; noSysHighlight(); addView(list) }
-        root = FrameLayout(this).apply { setBackgroundColor(screenBg(this@SettingsActivity)); noSysHighlight(); addView(scroll, panelParams(this@SettingsActivity, 96, 24)) }
+        list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(14), dp(12), dp(14), dp(18)) }
+        // Khung giữa vẫn là FrameLayout để tuỳ chọn Full màn hình / Rút gọn tiếp tục hoạt động.
+        scroll = ScrollView(this).apply {
+            background = glassPanel(this@SettingsActivity)
+            isFocusable = false
+            clipToPadding = false
+            noSysHighlight()
+            addView(list)
+        }
+        root = FrameLayout(this).apply {
+            setBackgroundColor(0xFF020B19.toInt())
+            noSysHighlight()
+        }
+        val page = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(12), dp(18), dp(14))
+        }
+        page.addView(createPremiumHeader(), LinearLayout.LayoutParams(-1, dp(78)))
+        val body = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.TOP
+        }
+        val nav = createPremiumNavigation()
+        body.addView(nav, LinearLayout.LayoutParams(0, -1, 0.27f))
+        val center = FrameLayout(this).apply { noSysHighlight() }
+        center.addView(scroll, panelParams(this@SettingsActivity, 8, 0))
+        body.addView(center, LinearLayout.LayoutParams(0, -1, 0.45f).apply { leftMargin = dp(10); rightMargin = dp(10) })
+        body.addView(createPremiumPreview(), LinearLayout.LayoutParams(0, -1, 0.28f))
+        page.addView(body, LinearLayout.LayoutParams(-1, 0, 1f).apply { topMargin = dp(8) })
+        root.addView(page, FrameLayout.LayoutParams(-1, -1))
         setContentView(root)
         build()
         if (Apps.str(this, "home_fail") != null) { Apps.del(this, "home_fail"); list.post { homeFailDialog() } }
-        // Sau khi màn hình được tạo lại (đổi kích cỡ TV...), đưa con trỏ về đúng dòng đang chọn thay vì về đầu danh sách
         val idx = b?.getInt("focus_idx", -1) ?: -1
         if (idx >= 0) afterLayout { focusRow(idx) } else afterLayout { focusFirstRow() }
+    }
+
+    private fun premiumCard(c: Context, fill: Int = 0xCC061A32.toInt(), stroke: Int = 0x884C91D9.toInt(), radius: Int = 18): GradientDrawable =
+        GradientDrawable().apply { setColor(fill); cornerRadius = dp(radius).toFloat(); setStroke(dp(1), stroke) }
+
+    private fun createPremiumHeader(): View {
+        val bar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(8), dp(2), dp(10), dp(2))
+        }
+        val mark = TextView(this).apply {
+            text = "⚙"
+            textSize = 42f * Apps.fs(this@SettingsActivity)
+            gravity = Gravity.CENTER
+            setTextColor(0xFF7DEBFF.toInt())
+            background = GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                intArrayOf(0xFF6D35E8.toInt(), 0xFF00C9D8.toInt(), 0xFFFF36C8.toInt())).apply {
+                shape = GradientDrawable.OVAL
+            }
+        }
+        bar.addView(mark, LinearLayout.LayoutParams(dp(60), dp(60)))
+        val titleBox = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(14), 0, 0, 0)
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        titleBox.addView(TextView(this).apply {
+            text = "Cài đặt TV Launcher"
+            textSize = 27f * Apps.fs(this@SettingsActivity)
+            typeface = android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.BOLD)
+            setTextColor(Color.WHITE)
+            shade()
+        })
+        titleBox.addView(TextView(this).apply {
+            text = "Tùy chỉnh giao diện theo sở thích của bạn"
+            textSize = 14f * Apps.fs(this@SettingsActivity)
+            setTextColor(0xFF9FEFFF.toInt())
+        })
+        bar.addView(titleBox, LinearLayout.LayoutParams(0, -1, 1f))
+        val status = TextView(this).apply {
+            text = "TV LAUNCHER  •  PREMIUM GLASS"
+            textSize = 13f * Apps.fs(this@SettingsActivity)
+            setTextColor(0xFF9FEFFF.toInt())
+            gravity = Gravity.CENTER_VERTICAL or Gravity.END
+            maxLines = 1
+        }
+        bar.addView(status)
+        return bar
+    }
+
+    private fun createPremiumNavigation(): View {
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(10), dp(12), dp(10), dp(12))
+            background = premiumCard(this@SettingsActivity, 0xD9061830.toInt(), 0x8846C6F2.toInt(), 20)
+        }
+        val title = TextView(this).apply {
+            text = "DANH MỤC CÀI ĐẶT"
+            textSize = 12f * Apps.fs(this@SettingsActivity)
+            setTextColor(0xFF65E7E0.toInt())
+            setPadding(dp(10), dp(4), dp(6), dp(10))
+        }
+        panel.addView(title)
+        val entries = listOf(
+            Triple("⌂", "Giao diện", "Chiều cao danh mục"),
+            Triple("●", "Màu sắc", "Màu nền bảng"),
+            Triple("Aa", "Phông chữ", "Kiểu phông chữ"),
+            Triple("▦", "Ứng dụng", "Số cột ứng dụng"),
+            Triple("▣", "Hình nền", "Thay đổi ảnh nền"),
+            Triple("⚙", "Hệ thống", "Cài đặt hệ thống"),
+            Triple("ⓘ", "Giới thiệu", "Giới thiệu")
+        )
+        entries.forEachIndexed { index, entry ->
+            val item = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                isFocusable = true
+                isClickable = true
+                setPadding(dp(10), dp(10), dp(8), dp(10))
+                background = android.graphics.drawable.StateListDrawable().apply {
+                    addState(intArrayOf(android.R.attr.state_focused), GradientDrawable().apply {
+                        setColor(0x4438DFFF); cornerRadius = dp(12).toFloat()
+                        setStroke(dp(2), 0xFF25E9FF.toInt())
+                    })
+                    addState(intArrayOf(), GradientDrawable().apply {
+                        setColor(if (index == 0) 0x332B9EFF else 0x00000000)
+                        cornerRadius = dp(12).toFloat()
+                        setStroke(dp(1), if (index == 0) 0xAA9C5BFF.toInt() else 0x224F91C8)
+                    })
+                }
+                noSysHighlight()
+                addView(TextView(context).apply {
+                    text = entry.first
+                    textSize = 23f * Apps.fs(this@SettingsActivity)
+                    gravity = Gravity.CENTER
+                    setTextColor(0xFFDAF7FF.toInt())
+                    background = premiumCard(this@SettingsActivity, 0xAA102D50.toInt(), 0x664DCCFF.toInt(), 10)
+                }, LinearLayout.LayoutParams(dp(42), dp(42)))
+                val labels = LinearLayout(context).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(dp(10), 0, 0, 0)
+                    addView(TextView(context).apply {
+                        text = entry.second
+                        textSize = 16f * Apps.fs(this@SettingsActivity)
+                        typeface = android.graphics.Typeface.DEFAULT_BOLD
+                        setTextColor(Color.WHITE)
+                    })
+                    addView(TextView(context).apply {
+                        text = when (entry.second) {
+                            "Giao diện" -> "Tùy chỉnh giao diện chính"
+                            "Màu sắc" -> "Chọn màu cho các thành phần"
+                            "Phông chữ" -> "Kiểu chữ toàn giao diện"
+                            "Ứng dụng" -> "Bố cục ứng dụng"
+                            "Hình nền" -> "Ảnh nền và trình chiếu"
+                            "Hệ thống" -> "Cài đặt chung của TV"
+                            else -> "Thông tin phiên bản"
+                        }
+                        textSize = 11f * Apps.fs(this@SettingsActivity)
+                        setTextColor(0xFF9FEFFF.toInt())
+                    })
+                }
+                addView(labels, LinearLayout.LayoutParams(0, -2, 1f))
+                setOnClickListener { scrollToSetting(entry.third) }
+                setOnFocusChangeListener { _, hasFocus ->
+                    if (hasFocus) background = GradientDrawable().apply {
+                        setColor(0x4438DFFF); cornerRadius = dp(12).toFloat()
+                        setStroke(dp(2), 0xFF25E9FF.toInt())
+                    } else background = premiumCard(this@SettingsActivity,
+                        if (index == 0) 0x332B9EFF else 0x00000000,
+                        if (index == 0) 0xAA9C5BFF.toInt() else 0x224F91C8, 12)
+                }
+            }
+            panel.addView(item, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(6) })
+        }
+        val spacer = View(this)
+        panel.addView(spacer, LinearLayout.LayoutParams(1, 0, 1f))
+        return panel
+    }
+
+    private fun createPremiumPreview(): View {
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), dp(14), dp(12), dp(12))
+            background = premiumCard(this@SettingsActivity, 0xD9061830.toInt(), 0x8846C6F2.toInt(), 20)
+        }
+        panel.addView(TextView(this).apply {
+            text = "Xem trước"
+            textSize = 19f * Apps.fs(this@SettingsActivity)
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            setTextColor(Color.WHITE)
+        })
+        panel.addView(TextView(this).apply {
+            text = "Đây là phong cách giao diện TV Launcher"
+            textSize = 12f * Apps.fs(this@SettingsActivity)
+            setTextColor(0xFF9FEFFF.toInt())
+            setPadding(0, dp(4), 0, dp(12))
+        })
+        val hero = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(dp(8), dp(18), dp(8), dp(18))
+            background = GradientDrawable(GradientDrawable.Orientation.TL_BR,
+                intArrayOf(0xFF06172D.toInt(), 0xFF17295B.toInt(), 0xFF24103D.toInt())).apply {
+                cornerRadius = dp(14).toFloat()
+                setStroke(dp(1), 0xAA8B52E8.toInt())
+            }
+        }
+        hero.addView(TextView(this).apply {
+            text = "▣  TV Launcher"
+            textSize = 22f * Apps.fs(this@SettingsActivity)
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setTextColor(0xFF72F3FF.toInt())
+        })
+        hero.addView(TextView(this).apply {
+            text = "Giải trí không giới hạn"
+            textSize = 13f * Apps.fs(this@SettingsActivity)
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+        })
+        panel.addView(hero, LinearLayout.LayoutParams(-1, dp(110)))
+        val shortcuts = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER; setPadding(0, dp(12), 0, dp(12)) }
+        listOf("⌂\nTrang chủ", "▦\nỨng dụng", "⚙\nCài đặt", "▤\nThư viện").forEachIndexed { i, label ->
+            shortcuts.addView(TextView(this).apply {
+                text = label
+                gravity = Gravity.CENTER
+                textSize = 10f * Apps.fs(this@SettingsActivity)
+                setTextColor(Color.WHITE)
+                setPadding(dp(2), dp(8), dp(2), dp(8))
+                background = premiumCard(this@SettingsActivity,
+                    if (i == 2) 0x4434E6FF else 0xAA0C2140.toInt(),
+                    if (i == 2) 0xFF22E9FF.toInt() else 0x664D91D9.toInt(), 10)
+            }, LinearLayout.LayoutParams(0, dp(66), 1f).apply { setMargins(dp(2), 0, dp(2), 0) })
+        }
+        panel.addView(shortcuts)
+        val sample = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+            background = premiumCard(this@SettingsActivity, 0xCC0B1C35.toInt(), 0x886B42D9.toInt(), 14)
+        }
+        sample.addView(TextView(this).apply {
+            text = "Ví dụ hiển thị với phong cách đã chọn:"
+            textSize = 11f * Apps.fs(this@SettingsActivity)
+            setTextColor(0xFF9FEFFF.toInt())
+        })
+        sample.addView(TextView(this).apply {
+            text = "Chào mừng bạn!"
+            textSize = 20f * Apps.fs(this@SettingsActivity)
+            typeface = selectedTypeface(this@SettingsActivity)
+            setTextColor(Color.WHITE)
+            setPadding(0, dp(8), 0, dp(4))
+        })
+        sample.addView(TextView(this).apply {
+            text = "TV Launcher mang đến trải nghiệm giải trí thông minh, hiện đại và cá nhân hóa theo sở thích của bạn."
+            textSize = 12f * Apps.fs(this@SettingsActivity)
+            setTextColor(0xFFBFD8F5.toInt())
+        })
+        panel.addView(sample, LinearLayout.LayoutParams(-1, -2))
+        val features = TextView(this).apply {
+            text = "✓  Chữ rõ ràng, dễ đọc\n\n✓  Tương thích điều khiển từ xa\n\n✓  Thiết kế tối ưu cho màn hình TV"
+            textSize = 12f * Apps.fs(this@SettingsActivity)
+            setTextColor(0xFF8FF7F0.toInt())
+            setPadding(dp(10), dp(12), dp(4), dp(4))
+        }
+        panel.addView(features, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+        return panel
+    }
+
+    private fun scrollToSetting(title: String) {
+        val index = (0 until list.childCount).firstOrNull {
+            val v = list.getChildAt(it)
+            v.tag == title || (v is TextView && v.text?.toString() == title)
+        }
+        if (index == null) {
+            Toast.makeText(this, "Không tìm thấy mục cài đặt: $title", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val row = list.getChildAt(index)
+        scroll.post {
+            scroll.smoothScrollTo(0, (row.top - dp(20)).coerceAtLeast(0))
+            row.requestFocus()
+        }
     }
 
     // Đổi màu nền bảng xong thì áp dụng ngay cho màn hình Cài đặt này, không cần mở lại
     private fun applyPanel() {
         scroll.background = glassPanel(this)
-        scroll.layoutParams = panelParams(this, 96, 24)   // rút gọn / đầy màn hình
-        root.setBackgroundColor(screenBg(this))
+        val parent = scroll.parent
+        if (parent is FrameLayout) scroll.layoutParams = panelParams(this, 8, 0)
+        root.setBackgroundColor(0xFF020B19.toInt())
     }
 
     // Lúc mới vào Cài đặt, đưa con trỏ về dòng đầu tiên
@@ -298,7 +565,7 @@ class SettingsActivity : VActivity() {
         val keepIdx = focusedRow()
         val keepTitle = if (keepIdx >= 0) list.getChildAt(keepIdx)?.tag as? String else null
         list.removeAllViews()
-        list.addView(TextView(this).apply { text = "TV LAUNCHER  •  PREMIUM GLASS"; textSize = 24f * Apps.fs(this@SettingsActivity); typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.BOLD); setTextColor(0xFF65E7E0.toInt()); setPadding(dp(20), dp(8), 0, dp(18)); shade() })
+        list.addView(TextView(this).apply { text = "Tùy chỉnh cài đặt"; textSize = 19f * Apps.fs(this@SettingsActivity); typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.BOLD); setTextColor(0xFF65E7E0.toInt()); setPadding(dp(10), dp(6), 0, dp(12)); shade() })
         val firstRow = list.childCount   // các dòng cài đặt sẽ được chia nhóm bên dưới
         item("Giới thiệu", "v$APP_VERSION", false, null, null) { showAbout() }
         item("Chuyển đầu vào (HDMI/AV)", null, false, null, null) { pickInput(this) }
