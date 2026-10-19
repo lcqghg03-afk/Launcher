@@ -4,15 +4,11 @@ android {
     compileSdk = 34
     // minSdk 21 + targetSdk 28: chạy được trên cả TV Xiaomi nội địa đời cũ (Android 6-9)
     // và giữ quyền đọc USB/bộ nhớ đơn giản, không bị giới hạn bởi scoped storage
-    defaultConfig { applicationId = "com.example.tvlauncher"; minSdk = 21; targetSdk = 28; versionCode = 7; versionName = "1.6" }
-    signingConfigs {
-        create("fixed") {
-            storeFile = file("release.jks"); storePassword = "tvlauncher"; keyAlias = "tvlauncher"; keyPassword = "tvlauncher"
-        }
-    }
+    defaultConfig { applicationId = "com.example.tvlauncher"; minSdk = 21; targetSdk = 28; versionCode = 8; versionName = "1.8" }
     buildTypes {
-        release { isMinifyEnabled = false; signingConfig = signingConfigs.getByName("fixed") }
-        debug { signingConfig = signingConfigs.getByName("fixed") }
+        // GitHub Actions builds a debug APK; do not reference a local release.jks that is not in the repository.
+        release { isMinifyEnabled = false }
+        debug { isMinifyEnabled = false }
     }
     // targetSdk 28 là cố ý (đọc USB/bộ nhớ đơn giản trên TV). Lint của Google Play đòi >= 33 nên tắt kiểm tra này khi build
     lint { checkReleaseBuilds = false; abortOnError = false }
