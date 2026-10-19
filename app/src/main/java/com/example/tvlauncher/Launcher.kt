@@ -795,6 +795,26 @@ class MainActivity : VActivity() {
     private lateinit var lunar: TextView
     private var scaleKey = 0
     private val tick = android.os.Handler(android.os.Looper.getMainLooper())
+    private val wallpaperTick = android.os.Handler(android.os.Looper.getMainLooper())
+    private val wallpaperR = object : Runnable {
+        override fun run() {
+            if (Apps.bool(this@MainActivity, "bg_slideshow", true)) {
+                val urls = try {
+                    val a = JSONArray(Apps.str(this@MainActivity, "bg_list") ?: "[]")
+                    (0 until a.length()).map { a.getString(it) }.distinct()
+                } catch (_: Exception) { emptyList<String>() }
+                if (urls.size >= 2) {
+                    val current = Apps.str(this@MainActivity, "bg_uri")
+                    val next = urls[(urls.indexOf(current).coerceAtLeast(-1) + 1) % urls.size]
+                    Apps.putStr(this@MainActivity, "bg_uri", next)
+                    Apps.putStr(this@MainActivity, "bg_type", "image")
+                    applyBackground()
+                }
+            }
+            val seconds = Apps.int(this@MainActivity, "bg_interval", 30).coerceIn(5, 3600)
+            wallpaperTick.postDelayed(this, seconds * 1000L)
+        }
+    }
     private val tickR = object : Runnable { override fun run() { refreshLunar(); refreshInputs(); tick.postDelayed(this, 60000) } }
     private lateinit var bg: FrameLayout
     private lateinit var tint: View
@@ -1412,12 +1432,14 @@ class MainActivity : VActivity() {
         if ((uiScale(this) * 1000).toInt() != scaleKey) { recreate(); return }
         applyAll()
         tick.removeCallbacks(tickR); tickR.run()
+        wallpaperTick.removeCallbacks(wallpaperR)
+        wallpaperTick.postDelayed(wallpaperR, Apps.int(this, "bg_interval", 30).coerceIn(5, 3600) * 1000L)
         if (System.currentTimeMillis() - lastWeather > 600000L) loadWeather()
     }
 
-    override fun onPause() { super.onPause(); tick.removeCallbacks(tickR) }
+    override fun onPause() { super.onPause(); tick.removeCallbacks(tickR); wallpaperTick.removeCallbacks(wallpaperR) }
 
-    override fun onStop() { super.onStop(); releaseBg() }
+    override fun onStop() { super.onStop(); wallpaperTick.removeCallbacks(wallpaperR); releaseBg() }
 
     private fun refreshLunar() {
         val z = Apps.tz(this)?.let { java.util.TimeZone.getTimeZone(it) } ?: java.util.TimeZone.getDefault()

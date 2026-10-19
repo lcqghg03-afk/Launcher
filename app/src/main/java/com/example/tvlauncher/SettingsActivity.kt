@@ -221,6 +221,7 @@ class SettingsActivity : VActivity() {
     private lateinit var scroll: ScrollView
     private lateinit var root: FrameLayout
     private var pendingVideo = false
+    private var pendingWallpaper = false
     private val REQ_HOME = 3
     private var refreshOnBack = false   // đã mở màn hình hệ thống (giao diện mặc định / trợ năng) => quay lại thì làm mới trạng thái
     private var homeCheckOnBack = false  // quay lại thì báo đã đặt được giao diện mặc định hay chưa
@@ -320,6 +321,24 @@ class SettingsActivity : VActivity() {
         choice("Số cột ứng dụng", "cols", arrayOf("4", "5", "6", "7", "8"), 2)
         val clear = { Apps.del(this, "bg_uri", "bg_type") }
         item("Thay đổi ảnh nền", bgLabel("image"), false, null, clear) { pick("image/*", 1) }
+        item("Tải ảnh nền lên / Thêm ảnh trình chiếu", wallpaperListLabel(), false, null, null) { pick("image/*", 4) }
+        item("Tự động đổi ảnh nền", if (Apps.bool(this, "bg_slideshow", true)) "Đang bật" else "Đang tắt", false, null, null) {
+            val now = Apps.bool(this, "bg_slideshow", true)
+            Apps.putBool(this, "bg_slideshow", !now); build()
+        }
+        item("Số giây đổi ảnh nền", "Mỗi ${Apps.int(this, "bg_interval", 30)} giây", false, null, null) {
+            val vals = intArrayOf(5, 10, 15, 30, 60, 120, 300)
+            val labels = vals.map { if (it < 60) "$it giây" else "${it / 60} phút" }.toTypedArray()
+            GlassBuilder(this).setTitle("Tự động đổi ảnh sau")
+                .setSingleChoiceItems(labels, vals.indexOf(Apps.int(this, "bg_interval", 30)).coerceAtLeast(0)) { d, i ->
+                    Apps.putInt(this, "bg_interval", vals[i]); d.dismiss(); build()
+                }.show()
+        }
+        item("Xoá danh sách ảnh trình chiếu", "Đang có ${wallpaperCount()} ảnh", false, null, null) {
+            GlassBuilder(this).setTitle("Xoá danh sách ảnh?").setMessage("Ảnh nền hiện tại sẽ được giữ lại.")
+                .setPositiveButton("Xoá danh sách") { d, _ -> Apps.del(this, "bg_list"); d.dismiss(); build() }
+                .setNegativeButton("Huỷ", null).show()
+        }
         item("Đặt video làm ảnh nền", bgLabel("video"), false, null, clear) { pick("video/*", 2) }
         choice("Múi giờ", "tz", arrayOf("Theo hệ thống TV", "Việt Nam (GMT+7)", "UTC", "Nhật Bản (GMT+9)", "New York", "Trung Quốc (GMT+8)"), 1)
         toggle("Hiển thị lịch âm", "lunar", true)
@@ -336,6 +355,9 @@ class SettingsActivity : VActivity() {
         choice("Kích thước ứng dụng", "appsize", arrayOf("Nhỏ", "Vừa", "Lớn"), 1)
         item("Dịch vụ trợ năng", enabledServices().size.let { if (it == 0) "Tắt" else "Bật ($it)" }, false, null, null) { accessibilityDialog() }
         choice("Cỡ chữ", "fontsz", arrayOf("Vừa", "Lớn", "Rất lớn"), 0)
+        choice("Kiểu phông chữ", "fontstyle", arrayOf("Mặc định", "Gọn hiện đại", "Mảnh nhẹ", "Đậm rõ", "Monospace"), 0, true)
+        item("Hình đại diện mặc định", avatarLabel(), false, null, null) { avatarDialog() }
+        item("Chuột ảo - tuỳ chỉnh con trỏ", cursorLabel(), false, null, null) { cursorDialog() }
         item("Khoá ứng dụng", if (Apps.str(this, "pin") == null) "Tắt" else "Đang bật (PIN ${pinLen(this)} số)", false, null, null) { lockDialog() }
         item("Khôi phục cài đặt TV Launcher", null, false, null, null) { guard(this) { confirmReset() } }
         // Xếp tất cả các dòng cài đặt theo thứ tự abc tiếng Việt (cùng cách xếp với danh sách ứng dụng: bỏ dấu, Đ = D), tiêu đề và dòng cuối trang giữ nguyên chỗ
@@ -660,13 +682,78 @@ class SettingsActivity : VActivity() {
             .setNegativeButton("Đóng", null).show()
     }
 
+    private fun selectedTypeface(c: Context): android.graphics.Typeface = when (Apps.int(c, "fontstyle", 0)) {
+        1 -> android.graphics.Typeface.create("sans-serif-condensed", android.graphics.Typeface.NORMAL)
+        2 -> android.graphics.Typeface.create("sans-serif-light", android.graphics.Typeface.NORMAL)
+        3 -> android.graphics.Typeface.create("sans-serif", android.graphics.Typeface.BOLD)
+        4 -> android.graphics.Typeface.MONOSPACE
+        else -> android.graphics.Typeface.DEFAULT
+    }
+
+    private fun avatarLabel(): String {
+        val names = arrayOf("Cầu vồng 7 màu", "Thiên nhiên", "Thành phố", "Động vật", "Vũ trụ", "Biển", "Hoa", "Neon", "Tối giản", "Ngẫu nhiên")
+        return names.getOrElse(Apps.int(this, "default_avatar", 0)) { names[0] }
+    }
+
+    private fun avatarDialog() {
+        val names = arrayOf("🌈  Cầu vồng 7 màu (mặc định)", "🌿  Thiên nhiên", "🌆  Thành phố", "🐾  Động vật", "🌌  Vũ trụ", "🌊  Biển", "🌸  Hoa", "✨  Neon", "⚪  Tối giản", "🎲  Ngẫu nhiên mỗi lần mở")
+        GlassBuilder(this).setTitle("Hình đại diện")
+            .setSingleChoiceItems(names, Apps.int(this, "default_avatar", 0)) { d, i ->
+                Apps.putInt(this, "default_avatar", i)
+                Apps.putBool(this, "avatar_random_each_start", i == 9)
+                d.dismiss(); build()
+                toast(this, "Đã chọn: ${names[i].substringAfter("  ")}")
+            }.setNegativeButton("Đóng", null).show()
+    }
+
+    private fun cursorLabel(): String {
+        if (!Apps.bool(this, "virtual_mouse", false)) return "Tắt"
+        val size = arrayOf("Nhỏ", "Vừa", "Lớn").getOrElse(Apps.int(this, "cursor_size", 1)) { "Vừa" }
+        return "Bật · $size · ${Apps.int(this, "cursor_sensitivity", 5)}/10"
+    }
+
+    private fun cursorDialog() {
+        val labels = arrayOf("Bật chuột ảo", "Kích thước con trỏ", "Màu con trỏ", "Độ nhạy phím điều hướng")
+        val colors = arrayOf("Trắng", "Đen", "Xanh ngọc", "Cầu vồng")
+        val sizes = arrayOf("Nhỏ", "Vừa", "Lớn")
+        fun openMenu() {
+            GlassBuilder(this).setTitle("Chuột ảo")
+                .setItems(arrayOf(
+                    if (Apps.bool(this, "virtual_mouse", false)) "Tắt chuột ảo" else "Bật chuột ảo",
+                    "Kích thước: ${sizes.getOrElse(Apps.int(this, "cursor_size", 1)) { "Vừa" }}",
+                    "Màu: ${colors.getOrElse(Apps.int(this, "cursor_color", 2)) { "Xanh ngọc" }}",
+                    "Độ nhạy: ${Apps.int(this, "cursor_sensitivity", 5)}/10"
+                )) { d, i ->
+                    d.dismiss()
+                    when (i) {
+                        0 -> { Apps.putBool(this, "virtual_mouse", !Apps.bool(this, "virtual_mouse", false)); build() }
+                        1 -> GlassBuilder(this).setTitle("Kích thước con trỏ").setSingleChoiceItems(sizes, Apps.int(this, "cursor_size", 1)) { x, n -> Apps.putInt(this, "cursor_size", n); x.dismiss(); build() }.show()
+                        2 -> GlassBuilder(this).setTitle("Màu con trỏ").setSingleChoiceItems(colors, Apps.int(this, "cursor_color", 2)) { x, n -> Apps.putInt(this, "cursor_color", n); x.dismiss(); build() }.show()
+                        3 -> {
+                            val seek = SeekBar(this).apply { max = 9; progress = (Apps.int(this, "cursor_sensitivity", 5) - 1).coerceIn(0, 9) }
+                            val note = TextView(this).apply { text = "Độ nhạy: ${seek.progress + 1}/10"; textSize = 18f; setPadding(dp(8), dp(8), dp(8), dp(8)) }
+                            seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                                override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) { note.text = "Độ nhạy: ${progress + 1}/10" }
+                                override fun onStartTrackingTouch(sb: SeekBar?) {}
+                                override fun onStopTrackingTouch(sb: SeekBar?) {}
+                            })
+                            GlassBuilder(this).setTitle("Độ nhạy chuột ảo").setView(column(this, note, seek))
+                                .setPositiveButton("Lưu") { _, _ -> Apps.putInt(this, "cursor_sensitivity", seek.progress + 1); build() }
+                                .setNegativeButton("Huỷ", null).show()
+                        }
+                    }
+                }.setNegativeButton("Đóng", null).show()
+        }
+        openMenu()
+    }
+
     private fun item(title: String, value: String?, red: Boolean, checked: Boolean?, reset: (() -> Unit)?, click: () -> Unit) {
         list.addView(LinearLayout(this).apply {
             tag = title   // tên dòng, dùng để xếp abc trong build()
             gravity = Gravity.CENTER_VERTICAL; isFocusable = true; isClickable = true; noSysHighlight()
             setPadding(dp(24), dp(16), dp(24), dp(16))
-            addView(TextView(context).apply { text = title; textSize = 20f * Apps.fs(this@SettingsActivity); setTextColor(if (red) 0xFFFF4444.toInt() else Apps.int(this@SettingsActivity, TEXT_PANEL, Color.WHITE)); shade() }, LinearLayout.LayoutParams(0, -2, 1f))
-            if (value != null) addView(TextView(context).apply { text = value; textSize = 18f; setTextColor(Apps.int(this@SettingsActivity, TEXT_PANEL, 0xFFDDDDDD.toInt())); shade() })
+            addView(TextView(context).apply { text = title; textSize = 20f * Apps.fs(this@SettingsActivity); setTextColor(if (red) 0xFFFF4444.toInt() else Apps.int(this@SettingsActivity, TEXT_PANEL, Color.WHITE)); typeface = selectedTypeface(this@SettingsActivity); shade() }, LinearLayout.LayoutParams(0, -2, 1f))
+            if (value != null) addView(TextView(context).apply { text = value; textSize = 18f * Apps.fs(this@SettingsActivity); setTextColor(Apps.int(this@SettingsActivity, TEXT_PANEL, 0xFFDDDDDD.toInt())); typeface = selectedTypeface(this@SettingsActivity); shade() })
             if (checked != null) addView(Switch(context).apply { isChecked = checked; isClickable = false; isFocusable = false })
             // Dòng đang chọn: có khung vuông trắng bao quanh để biết đang ở mục nào
             background = selectBg(this@SettingsActivity)
@@ -757,6 +844,13 @@ class SettingsActivity : VActivity() {
         }.show()
     }
 
+    private fun wallpaperUris(): List<String> = try {
+        val a = org.json.JSONArray(Apps.str(this, "bg_list") ?: "[]")
+        (0 until a.length()).map { a.getString(it) }.distinct()
+    } catch (_: Exception) { emptyList() }
+    private fun wallpaperCount() = wallpaperUris().size
+    private fun wallpaperListLabel() = "${wallpaperCount()} ảnh đã thêm · Chọn ảnh để thêm tiếp"
+
     private fun bgLabel(type: String): String {
         val u = Apps.str(this, "bg_uri")
         if (u == null || Apps.str(this, "bg_type") != type) return "Chưa đặt"
@@ -769,22 +863,23 @@ class SettingsActivity : VActivity() {
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
         val i2 = Intent(Intent.ACTION_GET_CONTENT).addCategory(Intent.CATEGORY_OPENABLE).setType(mime)
         GlassBuilder(this).setTitle("Chọn tệp từ đâu?").setItems(arrayOf("Trình chọn tệp của TV", "Duyệt bộ nhớ / USB (khuyên dùng cho TV Xiaomi)")) { _, i ->
-            if (i == 1) { browse(rc == 2); return@setItems }
+            if (i == 1) { browse(rc == 2, rc == 4); return@setItems }
             try { startActivityForResult(i1, rc) } catch (e: Exception) {
-                try { startActivityForResult(i2, rc) } catch (e2: Exception) { toast(this, "TV không có trình chọn tệp, chuyển sang duyệt bộ nhớ"); browse(rc == 2) }
+                try { startActivityForResult(i2, rc) } catch (e2: Exception) { toast(this, "TV không có trình chọn tệp, chuyển sang duyệt bộ nhớ"); browse(rc == 2, rc == 4) }
             }
         }.show()
     }
 
-    private fun browse(video: Boolean) {
+    private fun browse(video: Boolean, wallpaper: Boolean = false) {
         if (Build.VERSION.SDK_INT >= 23 && checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
-            pendingVideo = video; requestPermissions(arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE), 77); return
+            pendingVideo = video; pendingWallpaper = wallpaper
+            requestPermissions(arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE), 77); return
         }
-        showDir(null, video)
+        showDir(null, video, wallpaper)
     }
 
     override fun onRequestPermissionsResult(rc: Int, p: Array<out String>, r: IntArray) {
-        if (rc == 77) { if (r.isNotEmpty() && r[0] == PackageManager.PERMISSION_GRANTED) showDir(null, pendingVideo) else toast(this, "Cần cấp quyền đọc bộ nhớ để chọn tệp") }
+        if (rc == 77) { if (r.isNotEmpty() && r[0] == PackageManager.PERMISSION_GRANTED) showDir(null, pendingVideo, pendingWallpaper) else toast(this, "Cần cấp quyền đọc bộ nhớ để chọn tệp") }
     }
 
     private fun roots(): List<File> {
@@ -793,7 +888,7 @@ class SettingsActivity : VActivity() {
         return l
     }
 
-    private fun showDir(dir: File?, video: Boolean) {
+    private fun showDir(dir: File?, video: Boolean, wallpaper: Boolean = false) {
         val exts = if (video) setOf("mp4", "mkv", "webm", "3gp", "avi", "mov", "ts") else setOf("jpg", "jpeg", "png", "webp", "bmp")
         val entries: List<File>
         val labels: List<String>
@@ -810,12 +905,18 @@ class SettingsActivity : VActivity() {
         GlassBuilder(this).setTitle(dir?.path ?: "Chọn nơi lưu trữ").setItems(items.toTypedArray()) { _, i ->
             if (up && i == 0) {
                 val parent = dir!!.parentFile
-                showDir(if (parent == null || roots().any { it == dir }) null else parent, video)
+                showDir(if (parent == null || roots().any { it == dir }) null else parent, video, wallpaper)
             } else {
                 val f = entries[i - (if (up) 1 else 0)]
                 if (f.isDirectory) showDir(f, video) else {
-                    Apps.putStr(this, "bg_uri", Uri.fromFile(f).toString()); Apps.putStr(this, "bg_type", if (video) "video" else "image"); build()
-                    toast(this, if (video) "Đặt video ảnh nền thành công" else "Đặt ảnh nền thành công")
+                    val picked = Uri.fromFile(f).toString()
+                    if (wallpaper && !video) {
+                        val urls = wallpaperUris().toMutableList(); if (picked !in urls) urls.add(picked)
+                        Apps.putStr(this, "bg_list", org.json.JSONArray(urls).toString())
+                        Apps.putBool(this, "bg_slideshow", true)
+                    }
+                    Apps.putStr(this, "bg_uri", picked); Apps.putStr(this, "bg_type", if (video) "video" else "image"); build()
+                    toast(this, if (wallpaper && !video) "Đã thêm ảnh vào danh sách trình chiếu" else if (video) "Đặt video ảnh nền thành công" else "Đặt ảnh nền thành công")
                 }
             }
         }.setNegativeButton("Đóng", null).show()
@@ -826,8 +927,17 @@ class SettingsActivity : VActivity() {
         if (res != RESULT_OK) return
         val u = d?.data ?: return
         try { contentResolver.takePersistableUriPermission(u, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (e: Exception) {}
-        Apps.putStr(this, "bg_uri", u.toString()); Apps.putStr(this, "bg_type", if (rc == 2) "video" else "image"); build()
-        toast(this, if (rc == 2) "Đặt video ảnh nền thành công" else "Đặt ảnh nền thành công")
+        if (rc == 4) {
+            val urls = wallpaperUris().toMutableList()
+            if (u.toString() !in urls) urls.add(u.toString())
+            Apps.putStr(this, "bg_list", org.json.JSONArray(urls).toString())
+            Apps.putStr(this, "bg_uri", u.toString()); Apps.putStr(this, "bg_type", "image")
+            Apps.putBool(this, "bg_slideshow", true); build()
+            toast(this, "Đã thêm ảnh nền (${urls.size} ảnh trong danh sách)")
+        } else {
+            Apps.putStr(this, "bg_uri", u.toString()); Apps.putStr(this, "bg_type", if (rc == 2) "video" else "image"); build()
+            toast(this, if (rc == 2) "Đặt video ảnh nền thành công" else "Đặt ảnh nền thành công")
+        }
     }
 
     /** Trạng thái hiện ở cuối dòng "Chặn về giao diện gốc của TV" */
@@ -1233,7 +1343,7 @@ class SettingsActivity : VActivity() {
             addView(t("Facebook: Lộc Hưng", 16f))
             addView(t("Zalo: 0349353193", 16f))
             addView(t("Ủng hộ tác giả", 16f, 0xFF4D6BFF.toInt()))
-            addView(ImageView(context).apply { setImageResource(R.drawable.qr_donate); adjustViewBounds = true }, LinearLayout.LayoutParams(dp(300), -2))
+            addView(t("Mã QR ủng hộ: thêm ảnh QR của bạn vào tài nguyên dự án nếu cần.", 13f, 0xFFCCCCCC.toInt()))
             addView(t("Cảm ơn bạn đã sử dụng!", 14f))
         }
         GlassBuilder(this).setView(ScrollView(this).apply { addView(box) }).setPositiveButton("Đóng", null).show()
