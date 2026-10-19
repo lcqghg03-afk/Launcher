@@ -19,3 +19,6 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "Launcher"
+
+// Khai báo module Android để Gradle nhận diện các task :app:assembleDebug/Release.
+include(":app")
