@@ -1,4 +1,1 @@
-plugins {
-    id("com.android.application") apply false
-    id("org.jetbrains.kotlin.android") apply false
-}
+// Cấu hình plugin được khai báo trong settings.gradle.kts

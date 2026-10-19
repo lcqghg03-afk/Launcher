@@ -1,0 +1,9 @@
+Cập nhật: thêm 4 tuỳ chọn đổi màu chữ độc lập trong Cài đặt:
+- Màu chữ trong Cài đặt
+- Màu chữ thư viện ứng dụng
+- Màu chữ menu khi ấn giữ ứng dụng
+- Màu chữ giờ và thời tiết
+Màu được lưu trong SharedPreferences và giữ nguyên sau khi khởi động lại ứng dụng.
+
+
+2026-10-19: Settings refresh: clearer font choices, avatar theme choices, and virtual-pointer preference controls.
