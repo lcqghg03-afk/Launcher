@@ -1,3 +1,10 @@
+Bản chỉnh sửa giao diện Premium Glass 3 cột:
+- Thêm thanh tiêu đề Cài đặt TV Launcher.
+- Thêm menu danh mục điều hướng bên trái, liên kết tới các mục cài đặt hiện có.
+- Bố trí danh sách cài đặt hiện có ở giữa.
+- Thêm bảng xem trước phong cách TV Launcher bên phải.
+- Giữ lại logic cài đặt và các hành động hiện có; chưa xác nhận build APK trên môi trường Android.
+
 Cập nhật: thêm 4 tuỳ chọn đổi màu chữ độc lập trong Cài đặt:
 - Màu chữ trong Cài đặt
 - Màu chữ thư viện ứng dụng
@@ -10,3 +17,5 @@ Màu được lưu trong SharedPreferences và giữ nguyên sau khi khởi đ�
 
 
 1.8 - Giao diện Premium Glass: nhóm Cài đặt theo chủ đề, thêm tiêu đề nhóm màu teal; màn hình chính có lớp phủ gradient giúp chữ dễ đọc; chuyển ảnh nền có fade; cải thiện vòng lặp slideshow và thông báo lỗi đọc ảnh.
+
+- Fixed Kotlin compile error in SettingsActivity cursor sensitivity dialog: use the Activity Context explicitly inside SeekBar.apply.
