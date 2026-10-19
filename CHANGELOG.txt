@@ -19,3 +19,7 @@ Màu được lưu trong SharedPreferences và giữ nguyên sau khi khởi đ�
 1.8 - Giao diện Premium Glass: nhóm Cài đặt theo chủ đề, thêm tiêu đề nhóm màu teal; màn hình chính có lớp phủ gradient giúp chữ dễ đọc; chuyển ảnh nền có fade; cải thiện vòng lặp slideshow và thông báo lỗi đọc ảnh.
 
 - Fixed Kotlin compile error in SettingsActivity cursor sensitivity dialog: use the Activity Context explicitly inside SeekBar.apply.
+
+Build workflow fix v4 (2026-10-19):
+- Build action now invokes the module-qualified Gradle task :app:assembleRelease from the repository root.
+- Adds a Gradle projects diagnostic step so module configuration is visible in Actions logs.
