@@ -296,9 +296,10 @@ class SettingsActivity : VActivity() {
         // Nhớ vị trí cuộn và dòng đang chọn để dựng lại danh sách mà không bị nhảy về đầu
         val keepY = scroll.scrollY
         val keepIdx = focusedRow()
+        val keepTitle = if (keepIdx >= 0) list.getChildAt(keepIdx)?.tag as? String else null
         list.removeAllViews()
-        list.addView(TextView(this).apply { text = "TV Launcher"; textSize = 24f; setTextColor(0xFF4D6BFF.toInt()); setPadding(dp(24), 0, 0, dp(12)); shade() })
-        val firstRow = list.childCount   // các dòng cài đặt bắt đầu từ đây (sau tiêu đề), sẽ được xếp abc ở cuối hàm
+        list.addView(TextView(this).apply { text = "TV LAUNCHER  •  PREMIUM GLASS"; textSize = 24f * Apps.fs(this@SettingsActivity); typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.BOLD); setTextColor(0xFF65E7E0.toInt()); setPadding(dp(20), dp(8), 0, dp(18)); shade() })
+        val firstRow = list.childCount   // các dòng cài đặt sẽ được chia nhóm bên dưới
         item("Giới thiệu", "v$APP_VERSION", false, null, null) { showAbout() }
         item("Chuyển đầu vào (HDMI/AV)", null, false, null, null) { pickInput(this) }
         item("Cài đặt hệ thống", null, false, null, null) { openSystemSettings(this) }
@@ -324,7 +325,12 @@ class SettingsActivity : VActivity() {
         item("Tải ảnh nền lên / Thêm ảnh trình chiếu", wallpaperListLabel(), false, null, null) { pick("image/*", 4) }
         item("Tự động đổi ảnh nền", if (Apps.bool(this, "bg_slideshow", true)) "Đang bật" else "Đang tắt", false, null, null) {
             val now = Apps.bool(this, "bg_slideshow", true)
-            Apps.putBool(this, "bg_slideshow", !now); build()
+            if (!now && wallpaperCount() < 2) {
+                toast(this, "Cần ít nhất 2 ảnh. Hãy chọn ảnh để thêm vào trình chiếu.")
+                pick("image/*", 4)
+            } else {
+                Apps.putBool(this, "bg_slideshow", !now); build()
+            }
         }
         item("Số giây đổi ảnh nền", "Mỗi ${Apps.int(this, "bg_interval", 30)} giây", false, null, null) {
             val vals = intArrayOf(5, 10, 15, 30, 60, 120, 300)
@@ -360,15 +366,39 @@ class SettingsActivity : VActivity() {
         item("Chuột ảo - tuỳ chỉnh con trỏ", cursorLabel(), false, null, null) { cursorDialog() }
         item("Khoá ứng dụng", if (Apps.str(this, "pin") == null) "Tắt" else "Đang bật (PIN ${pinLen(this)} số)", false, null, null) { lockDialog() }
         item("Khôi phục cài đặt TV Launcher", null, false, null, null) { guard(this) { confirmReset() } }
-        // Xếp tất cả các dòng cài đặt theo thứ tự abc tiếng Việt (cùng cách xếp với danh sách ứng dụng: bỏ dấu, Đ = D), tiêu đề và dòng cuối trang giữ nguyên chỗ
+        // Chia cài đặt thành các nhóm rõ ràng thay vì gom thành một danh sách ABC khó tìm trên TV.
         val rows = (firstRow until list.childCount).map { list.getChildAt(it) }
         rows.forEach { list.removeView(it) }
-        rows.sortedVi { (it.tag as? String) ?: "" }.forEach { list.addView(it) }
-        list.addView(TextView(this).apply { text = "TV Launcher By Lộc Hưng"; textSize = 14f; setTextColor(Color.WHITE); gravity = Gravity.CENTER; setPadding(0, dp(24), 0, 0); shade() })
+        val groups = listOf(
+            "HÌNH NỀN & TRÌNH CHIẾU" to listOf("Thay đổi ảnh nền", "Tải ảnh nền lên / Thêm ảnh trình chiếu", "Tự động đổi ảnh nền", "Số giây đổi ảnh nền", "Xoá danh sách ảnh trình chiếu", "Đặt video làm ảnh nền"),
+            "GIAO DIỆN & HIỂN THỊ" to listOf("Màu nền bảng", "Màu nền Tất cả ứng dụng", "Màu nền menu ấn giữ ứng dụng", "Màu nền giờ và thời tiết", "Màu chữ trong Cài đặt", "Màu chữ thư viện ứng dụng", "Màu chữ menu ấn giữ ứng dụng", "Màu chữ giờ và thời tiết", "Kích thước bảng", "Cỡ chữ", "Kiểu phông chữ", "Bo góc ứng dụng", "Chiều cao danh mục", "Số cột ứng dụng", "Kích thước ứng dụng", "Độ phân giải màn hình"),
+            "MÀN HÌNH CHÍNH" to listOf("Hiển thị tiện ích thời tiết", "Hiển thị lịch âm", "Múi giờ", "Hiển thị hàng Yêu thích", "Hiển thị hàng Đầu vào (HDMI, VGA...)", "Vị trí hàng Đầu vào", "Hiển thị đầu vào MiTV", "Hình đại diện mặc định"),
+            "ĐIỀU KHIỂN & CÁ NHÂN HOÁ" to listOf("Chuột ảo - tuỳ chỉnh con trỏ", "Dịch vụ trợ năng", "Ẩn / hiện ứng dụng"),
+            "ỨNG DỤNG & KHỞI ĐỘNG" to listOf("Khởi động cùng thiết bị", "Chuyển đầu vào (HDMI/AV)", "Trợ lý giọng nói", "Cài đặt tivi", "Cài đặt hệ thống", "Khoá ứng dụng"),
+            "HỆ THỐNG & KHÁC" to listOf("Giới thiệu", "Khôi phục cài đặt TV Launcher")
+        )
+        val used = HashSet<View>()
+        groups.forEach { (heading, titles) ->
+            val matching = rows.filter { (it.tag as? String) in titles && used.add(it) }
+            if (matching.isNotEmpty()) {
+                list.addView(sectionHeader(heading))
+                matching.forEach { list.addView(it) }
+            }
+        }
+        // Mục mới ở các phiên bản sau vẫn hiển thị, không bị mất nếu chưa được gán nhóm.
+        val remaining = rows.filter { used.add(it) }
+        if (remaining.isNotEmpty()) {
+            list.addView(sectionHeader("TUỲ CHỌN KHÁC"))
+            remaining.forEach { list.addView(it) }
+        }
+        list.addView(TextView(this).apply { text = "TV Launcher • Premium Glass"; textSize = 14f; setTextColor(0xFFB8DFFF.toInt()); gravity = Gravity.CENTER; setPadding(0, dp(24), 0, dp(16)); shade() })
         // Trả lại đúng vị trí cuộn và dòng đang chọn như trước khi dựng lại
         if (keepY > 0 || keepIdx >= 0) afterLayout {
             scroll.scrollTo(0, keepY)
-            if (keepIdx >= 0) list.getChildAt(keepIdx)?.requestFocus()
+            if (keepTitle != null) {
+                (0 until list.childCount).map { list.getChildAt(it) }
+                    .firstOrNull { it.tag == keepTitle && it.isFocusable }?.requestFocus()
+            } else if (keepIdx >= 0) list.getChildAt(keepIdx)?.takeIf { it.isFocusable }?.requestFocus()
         }
     }
 
@@ -730,8 +760,7 @@ class SettingsActivity : VActivity() {
                         1 -> GlassBuilder(this).setTitle("Kích thước con trỏ").setSingleChoiceItems(sizes, Apps.int(this, "cursor_size", 1)) { x, n -> Apps.putInt(this, "cursor_size", n); x.dismiss(); build() }.show()
                         2 -> GlassBuilder(this).setTitle("Màu con trỏ").setSingleChoiceItems(colors, Apps.int(this, "cursor_color", 2)) { x, n -> Apps.putInt(this, "cursor_color", n); x.dismiss(); build() }.show()
                         3 -> {
-                            val sens = Apps.int(this, "cursor_sensitivity", 5)
-                            val seek = SeekBar(this).apply { max = 9; progress = (sens - 1).coerceIn(0, 9) }
+                            val seek = SeekBar(this).apply { max = 9; progress = (Apps.int(this, "cursor_sensitivity", 5) - 1).coerceIn(0, 9) }
                             val note = TextView(this).apply { text = "Độ nhạy: ${seek.progress + 1}/10"; textSize = 18f; setPadding(dp(8), dp(8), dp(8), dp(8)) }
                             seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                                 override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) { note.text = "Độ nhạy: ${progress + 1}/10" }
@@ -748,9 +777,22 @@ class SettingsActivity : VActivity() {
         openMenu()
     }
 
+    private fun sectionHeader(label: String): View = TextView(this).apply {
+        text = label
+        textSize = 14f * Apps.fs(this@SettingsActivity)
+        typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.BOLD)
+        setTextColor(0xFF65E7E0.toInt())
+        setPadding(dp(20), dp(22), dp(20), dp(8))
+        isFocusable = false
+        background = GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(0x3327D9D0, 0x1127D9D0, 0x0027D9D0)).apply {
+            cornerRadius = dp(10).toFloat()
+        }
+        shade()
+    }
+
     private fun item(title: String, value: String?, red: Boolean, checked: Boolean?, reset: (() -> Unit)?, click: () -> Unit) {
         list.addView(LinearLayout(this).apply {
-            tag = title   // tên dòng, dùng để xếp abc trong build()
+            tag = title   // tên dòng, dùng để phân nhóm trong build()
             gravity = Gravity.CENTER_VERTICAL; isFocusable = true; isClickable = true; noSysHighlight()
             setPadding(dp(24), dp(16), dp(24), dp(16))
             addView(TextView(context).apply { text = title; textSize = 20f * Apps.fs(this@SettingsActivity); setTextColor(if (red) 0xFFFF4444.toInt() else Apps.int(this@SettingsActivity, TEXT_PANEL, Color.WHITE)); typeface = selectedTypeface(this@SettingsActivity); shade() }, LinearLayout.LayoutParams(0, -2, 1f))
@@ -911,10 +953,10 @@ class SettingsActivity : VActivity() {
                 val f = entries[i - (if (up) 1 else 0)]
                 if (f.isDirectory) showDir(f, video) else {
                     val picked = Uri.fromFile(f).toString()
-                    if (wallpaper && !video) {
+                    if (!video) {
                         val urls = wallpaperUris().toMutableList(); if (picked !in urls) urls.add(picked)
                         Apps.putStr(this, "bg_list", org.json.JSONArray(urls).toString())
-                        Apps.putBool(this, "bg_slideshow", true)
+                        if (urls.size >= 2) Apps.putBool(this, "bg_slideshow", true)
                     }
                     Apps.putStr(this, "bg_uri", picked); Apps.putStr(this, "bg_type", if (video) "video" else "image"); build()
                     toast(this, if (wallpaper && !video) "Đã thêm ảnh vào danh sách trình chiếu" else if (video) "Đặt video ảnh nền thành công" else "Đặt ảnh nền thành công")
@@ -928,16 +970,17 @@ class SettingsActivity : VActivity() {
         if (res != RESULT_OK) return
         val u = d?.data ?: return
         try { contentResolver.takePersistableUriPermission(u, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (e: Exception) {}
-        if (rc == 4) {
+        if (rc == 4 || rc == 1) {
             val urls = wallpaperUris().toMutableList()
             if (u.toString() !in urls) urls.add(u.toString())
             Apps.putStr(this, "bg_list", org.json.JSONArray(urls).toString())
             Apps.putStr(this, "bg_uri", u.toString()); Apps.putStr(this, "bg_type", "image")
-            Apps.putBool(this, "bg_slideshow", true); build()
-            toast(this, "Đã thêm ảnh nền (${urls.size} ảnh trong danh sách)")
+            if (urls.size >= 2) Apps.putBool(this, "bg_slideshow", true)
+            build()
+            toast(this, if (urls.size >= 2) "Đã thêm ảnh nền (${urls.size} ảnh trong danh sách)" else "Đã đặt ảnh nền. Thêm ảnh thứ hai để bật trình chiếu tự động.")
         } else {
-            Apps.putStr(this, "bg_uri", u.toString()); Apps.putStr(this, "bg_type", if (rc == 2) "video" else "image"); build()
-            toast(this, if (rc == 2) "Đặt video ảnh nền thành công" else "Đặt ảnh nền thành công")
+            Apps.putStr(this, "bg_uri", u.toString()); Apps.putStr(this, "bg_type", "video"); build()
+            toast(this, "Đặt video ảnh nền thành công")
         }
     }
 

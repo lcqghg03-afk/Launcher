@@ -36,7 +36,7 @@ import java.net.URL
 import kotlin.concurrent.thread
 
 /** Số phiên bản hiển thị trong Cài đặt (dòng Giới thiệu và hộp thoại Giới thiệu). Nhớ đổi versionName trong build.gradle.kts cho khớp */
-const val APP_VERSION = "1.7"
+const val APP_VERSION = "1.8"
 
 /** Danh sách tỉnh/thành để chọn nơi hiển thị thời tiết thủ công (toạ độ xấp xỉ trung tâm) */
 val VN_PLACES = listOf(
@@ -805,7 +805,8 @@ class MainActivity : VActivity() {
                 } catch (_: Exception) { emptyList<String>() }
                 if (urls.size >= 2) {
                     val current = Apps.str(this@MainActivity, "bg_uri")
-                    val next = urls[(urls.indexOf(current).coerceAtLeast(-1) + 1) % urls.size]
+                    val currentIndex = urls.indexOf(current)
+                    val next = urls[if (currentIndex < 0) 0 else (currentIndex + 1) % urls.size]
                     Apps.putStr(this@MainActivity, "bg_uri", next)
                     Apps.putStr(this@MainActivity, "bg_type", "image")
                     applyBackground()
@@ -841,7 +842,12 @@ class MainActivity : VActivity() {
         Apps.del(this, "tv_ch", "tv_show", "tvc_show", "vch", "size_@tv", "fs_@tv")
         Apps.setHidden(this, "@tv", false)
         val root = FrameLayout(this)
-        bg = FrameLayout(this); tint = View(this)
+        bg = FrameLayout(this)
+        tint = View(this).apply {
+            // Lớp phủ gradient kính: tăng độ tương phản của chữ/nút nhưng vẫn giữ ảnh nền nhìn thấy rõ.
+            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0x44040A16, 0x08040A16, 0x18040A16, 0x66040A16))
+            isClickable = false
+        }
         root.addView(bg, -1, -1); root.addView(tint, -1, -1)
 
         // Bốn nút ở hàng trên cùng: mỗi nút là một khối riêng (vị trí trái/phải, cỡ và khoá riêng), đặt thẳng vào màn hình; applyTop() sắp xếp
@@ -881,6 +887,8 @@ class MainActivity : VActivity() {
         // Yêu thích
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
+            setPadding(dp(14), dp(10), dp(14), dp(12))
+            background = glassPanel(this@MainActivity, true)
             addView(rowTitle("Yêu thích", "@favs", "Hàng yêu thích") { favRow }, LinearLayout.LayoutParams(-2, -2))
             favRow = LinearLayout(this@MainActivity)
             addView(HorizontalScrollView(this@MainActivity).apply { isFocusable = false; addView(favRow) })
@@ -891,6 +899,8 @@ class MainActivity : VActivity() {
         // Đầu vào: HDMI 1/2/3, VGA, AV... mặc định nằm DƯỚI hàng Yêu thích (đổi lên/xuống được, xem applyOrder)
         val ibox = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
+            setPadding(dp(14), dp(10), dp(14), dp(12))
+            background = glassPanel(this@MainActivity, true)
             addView(rowTitle("Đầu vào", "@inputs", "Hàng đầu vào") { inputRow }, LinearLayout.LayoutParams(-2, -2))
             inputRow = LinearLayout(this@MainActivity)
             addView(HorizontalScrollView(this@MainActivity).apply { isFocusable = false; addView(inputRow) })
@@ -898,7 +908,10 @@ class MainActivity : VActivity() {
         }
         inputBox = ibox
         // Các mục tuỳ chỉnh: nằm trên hàng Yêu thích, mỗi mục là một hàng (tên mục + các ô ứng dụng); chưa có mục nào thì ẩn cả khối
-        secBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; visibility = View.GONE }
+        secBox = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; visibility = View.GONE
+            setPadding(dp(14), dp(10), dp(14), dp(12)); background = glassPanel(this@MainActivity, true)
+        }
         bottomCol = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         // Cuộn dọc được: nhiều mục thì màn hình cuộn theo ô đang chọn, không tràn ra ngoài. Chừa phía trên cho ô giờ + thời tiết
         bottomScroll = ScrollView(this).apply { isFocusable = false; isVerticalScrollBarEnabled = false; overScrollMode = View.OVER_SCROLL_NEVER; addView(bottomCol) }
@@ -1476,7 +1489,7 @@ class MainActivity : VActivity() {
                 bg.addView(sv, -1, -1)
             } else {
                 // Giải mã ảnh thu nhỏ trong luồng riêng để TV yếu không bị đơ hoặc hết RAM
-                val iv = ImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
+                val iv = ImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP; alpha = 0f }
                 bg.addView(iv, -1, -1)
                 thread {
                     // Độ phân giải ảnh nền: Full HD (mặc định) / 2K / 4K / Gốc
@@ -1486,7 +1499,8 @@ class MainActivity : VActivity() {
                         // Sắc nét: phóng to giữ nguyên ô vuông (hợp ảnh pixel / ảnh nhỏ); Mượt: làm mịn như thường
                         if (Apps.int(this, "imgscale", 0) == 1) iv.setImageDrawable(android.graphics.drawable.BitmapDrawable(resources, bmp).apply { setFilterBitmap(false) })
                         else iv.setImageBitmap(bmp)
-                    } else Toast.makeText(this, "Không mở được ảnh nền", Toast.LENGTH_SHORT).show() }
+                        iv.animate().alpha(1f).setDuration(450L).start()
+                    } else Toast.makeText(this, "Không đọc được ảnh nền. Hãy chọn ảnh JPG/PNG khác hoặc kiểm tra quyền đọc tệp.", Toast.LENGTH_LONG).show() }
                 }
             }
         } catch (e: Exception) { Toast.makeText(this, "Không mở được nền", Toast.LENGTH_SHORT).show() }
@@ -1495,7 +1509,6 @@ class MainActivity : VActivity() {
 
     private fun applyAll() {
         applyBackground()
-        tint.setBackgroundColor(0x00000000)
         (bottomScroll.layoutParams as FrameLayout.LayoutParams).bottomMargin = dp(intArrayOf(20, 40, 80)[Apps.int(this, "cat_h", 1)])
         bottomScroll.requestLayout()
         lunar.visibility = if (Apps.bool(this, "lunar", true)) View.VISIBLE else View.GONE
