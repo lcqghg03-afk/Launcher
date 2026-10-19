@@ -7,3 +7,6 @@ Màu được lưu trong SharedPreferences và giữ nguyên sau khi khởi đ�
 
 
 2026-10-19: Settings refresh: clearer font choices, avatar theme choices, and virtual-pointer preference controls.
+
+
+1.8 - Giao diện Premium Glass: nhóm Cài đặt theo chủ đề, thêm tiêu đề nhóm màu teal; màn hình chính có lớp phủ gradient giúp chữ dễ đọc; chuyển ảnh nền có fade; cải thiện vòng lặp slideshow và thông báo lỗi đọc ảnh.
