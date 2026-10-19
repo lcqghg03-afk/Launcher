@@ -760,7 +760,7 @@ class SettingsActivity : VActivity() {
                         1 -> GlassBuilder(this).setTitle("Kích thước con trỏ").setSingleChoiceItems(sizes, Apps.int(this, "cursor_size", 1)) { x, n -> Apps.putInt(this, "cursor_size", n); x.dismiss(); build() }.show()
                         2 -> GlassBuilder(this).setTitle("Màu con trỏ").setSingleChoiceItems(colors, Apps.int(this, "cursor_color", 2)) { x, n -> Apps.putInt(this, "cursor_color", n); x.dismiss(); build() }.show()
                         3 -> {
-                            val seek = SeekBar(this).apply { max = 9; progress = (Apps.int(this, "cursor_sensitivity", 5) - 1).coerceIn(0, 9) }
+                            val seek = SeekBar(this).apply { max = 9; progress = (Apps.int(this@SettingsActivity, "cursor_sensitivity", 5) - 1).coerceIn(0, 9) }
                             val note = TextView(this).apply { text = "Độ nhạy: ${seek.progress + 1}/10"; textSize = 18f; setPadding(dp(8), dp(8), dp(8), dp(8)) }
                             seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                                 override fun onProgressChanged(sb: SeekBar?, progress: Int, fromUser: Boolean) { note.text = "Độ nhạy: ${progress + 1}/10" }
